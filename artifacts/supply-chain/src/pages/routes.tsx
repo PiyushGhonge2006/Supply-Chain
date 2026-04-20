@@ -26,7 +26,7 @@ export default function Routes() {
   const handleOptimize = (id: number) => {
     setOptimizingId(id);
     optimizeRoute.mutate(
-      { data: { routeId: id, priority: 'balanced' } as any }, // Assuming body payload required or adapt based on actual API
+      { id },
       {
         onSuccess: (result) => {
           toast({
