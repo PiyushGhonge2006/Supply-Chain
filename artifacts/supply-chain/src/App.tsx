@@ -11,6 +11,7 @@ import Routes from "@/pages/routes";
 import Analytics from "@/pages/analytics";
 import Warehouses from "@/pages/warehouses";
 import { MainLayout } from "@/components/layout/main-layout";
+import MapPage from "@/pages/map";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -32,6 +33,7 @@ function Router() {
         <Route path="/routes" component={Routes} />
         <Route path="/analytics" component={Analytics} />
         <Route path="/warehouses" component={Warehouses} />
+        <Route path="/map" component={MapPage} />
         <Route component={NotFound} />
       </Switch>
     </MainLayout>
