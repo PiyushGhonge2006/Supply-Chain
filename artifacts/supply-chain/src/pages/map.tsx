@@ -5,7 +5,7 @@ import "leaflet/dist/leaflet.css";
 import { useListShipments, useListWarehouses, useListDisruptions } from "@workspace/api-client-react";
 import {
   Search, Navigation, X, AlertTriangle, Loader2,
-  ArrowRight, Clock, Ruler, Map as MapIcon, Package, Building2
+  ArrowRight, Clock, PencilRuler, Map as MapIcon, Package, Building2
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
