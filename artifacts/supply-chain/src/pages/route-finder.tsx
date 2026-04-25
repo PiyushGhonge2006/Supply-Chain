@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -43,12 +44,15 @@ import {
   ArrowRight,
   TrendingUp,
   TrendingDown,
+  Search,
+  Loader2,
 } from "lucide-react";
 import {
   buildGraph,
   applyIncidents,
   yenKShortestPaths,
   distancePointToSegmentKm,
+  haversineKm,
   type GraphNode,
   type LatLng,
   type PathResult,
@@ -90,6 +94,9 @@ const PATH_COLORS = [
   "#94a3b8",
 ];
 
+const ORIGIN_ID = "__origin";
+const DEST_ID = "__dest";
+
 function pinIcon(label: string, color: string) {
   return L.divIcon({
     className: "",
@@ -130,12 +137,16 @@ interface Incident {
 interface RerouteAlert {
   id: string;
   at: number;
-  source: string;
-  target: string;
   before: PathResult;
   after: PathResult;
   trigger: string;
   acknowledged: boolean;
+}
+
+interface ResolvedPoint {
+  position: LatLng;
+  label: string;
+  shortLabel: string;
 }
 
 function severityNumber(s: string): number {
@@ -156,13 +167,71 @@ const SIM_INCIDENT_POOL: Omit<Incident, "id">[] = [
   { position: [20.0, 73.5],       radiusKm: 60, severity: 3, title: "Multi-vehicle pileup",       type: "accident" },
 ];
 
+async function geocode(query: string): Promise<{ lat: string; lon: string; display_name: string } | null> {
+  try {
+    const r = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1&addressdetails=0`,
+      { headers: { "Accept-Language": "en" } },
+    );
+    if (!r.ok) return null;
+    const data = await r.json();
+    return Array.isArray(data) && data.length > 0 ? data[0] : null;
+  } catch {
+    return null;
+  }
+}
+
+function matchNodeByText(text: string, nodes: GraphNode[]): GraphNode | null {
+  const q = text.trim().toLowerCase();
+  if (!q) return null;
+  return (
+    nodes.find((n) => n.city?.toLowerCase() === q) ??
+    nodes.find((n) => n.name.toLowerCase() === q) ??
+    nodes.find(
+      (n) =>
+        n.city?.toLowerCase().startsWith(q) ||
+        n.name.toLowerCase().startsWith(q),
+    ) ??
+    null
+  );
+}
+
+async function resolvePoint(
+  text: string,
+  nodes: GraphNode[],
+): Promise<ResolvedPoint | null> {
+  const matched = matchNodeByText(text, nodes);
+  if (matched) {
+    return {
+      position: matched.position,
+      label: matched.name,
+      shortLabel: matched.city ?? matched.name,
+    };
+  }
+  const geo = await geocode(text);
+  if (!geo) return null;
+  const lat = parseFloat(geo.lat);
+  const lon = parseFloat(geo.lon);
+  if (Number.isNaN(lat) || Number.isNaN(lon)) return null;
+  const short = geo.display_name.split(",")[0]?.trim() || text;
+  return {
+    position: [lat, lon],
+    label: geo.display_name,
+    shortLabel: short,
+  };
+}
+
 export default function RouteFinder() {
   const { t } = useTranslation();
   const { data: warehouses } = useListWarehouses();
   const { data: disruptions, refetch: refetchDisruptions } = useListDisruptions({});
 
-  const [source, setSource] = useState<string>("mum");
-  const [target, setTarget] = useState<string>("del");
+  const [originText, setOriginText] = useState<string>("Pune");
+  const [destText, setDestText] = useState<string>("Mumbai");
+  const [originPoint, setOriginPoint] = useState<ResolvedPoint | null>(null);
+  const [destPoint, setDestPoint] = useState<ResolvedPoint | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string>("");
   const [k, setK] = useState<number>(6);
   const [activePath, setActivePath] = useState<number>(0);
   const [scanTick, setScanTick] = useState(0);
@@ -179,7 +248,7 @@ export default function RouteFinder() {
     return () => clearInterval(t);
   }, []);
 
-  const nodes: GraphNode[] = useMemo(() => {
+  const warehouseNodes: GraphNode[] = useMemo(() => {
     if (warehouses && warehouses.length >= 4) {
       return warehouses.map((w: any) => ({
         id: String(w.id),
@@ -192,12 +261,42 @@ export default function RouteFinder() {
     return SEED_NODES;
   }, [warehouses]);
 
+  /* ── Resolve initial defaults once warehouseNodes are ready ── */
+  const initialResolved = useRef(false);
   useEffect(() => {
-    if (nodes.length === 0) return;
-    if (!nodes.find((n) => n.id === source)) setSource(nodes[0].id);
-    if (!nodes.find((n) => n.id === target))
-      setTarget(nodes[nodes.length - 1].id);
-  }, [nodes, source, target]);
+    if (initialResolved.current) return;
+    if (warehouseNodes.length === 0) return;
+    initialResolved.current = true;
+    void runSearch(originText, destText);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [warehouseNodes]);
+
+  async function runSearch(oText: string, dText: string) {
+    if (!oText.trim() || !dText.trim()) {
+      setSearchError(t("routeFinder.enterBoth"));
+      return;
+    }
+    setSearching(true);
+    setSearchError("");
+    const [og, dg] = await Promise.all([
+      resolvePoint(oText, warehouseNodes),
+      resolvePoint(dText, warehouseNodes),
+    ]);
+    if (!og) {
+      setSearchError(t("routeFinder.cannotFind", { q: oText }));
+      setSearching(false);
+      return;
+    }
+    if (!dg) {
+      setSearchError(t("routeFinder.cannotFind", { q: dText }));
+      setSearching(false);
+      return;
+    }
+    setOriginPoint(og);
+    setDestPoint(dg);
+    setActivePath(0);
+    setSearching(false);
+  }
 
   const allIncidents: Incident[] = useMemo(() => {
     const out: Incident[] = [...simIncidents];
@@ -216,20 +315,57 @@ export default function RouteFinder() {
     return out;
   }, [disruptions, simIncidents]);
 
-  const baseGraph = useMemo(
-    () => buildGraph(nodes, { maxNeighbors: 5 }),
-    [nodes],
-  );
+  /* ── Build a graph that includes the user's origin/dest as virtual nodes ── */
+  const baseGraph = useMemo(() => {
+    if (!originPoint || !destPoint) return null;
 
-  /* ── Step 1: compute clean baseline path (no incident effects) ── */
+    const originNode: GraphNode = {
+      id: ORIGIN_ID,
+      name: originPoint.shortLabel,
+      city: originPoint.shortLabel,
+      position: originPoint.position,
+    };
+    const destNode: GraphNode = {
+      id: DEST_ID,
+      name: destPoint.shortLabel,
+      city: destPoint.shortLabel,
+      position: destPoint.position,
+    };
+
+    const directDist = haversineKm(originPoint.position, destPoint.position);
+    const allNodes = [...warehouseNodes, originNode, destNode];
+
+    /* If the route is short enough, allow direct routing without intermediate
+       warehouses by giving each user node enough neighbors to reach the other.
+       For long-haul we still let warehouses act as transshipment points. */
+    const maxNeighbors = directDist < 300 ? 6 : 5;
+    const g = buildGraph(allNodes, { maxNeighbors });
+
+    /* Always guarantee a direct edge between origin and destination so that
+       even when no good warehouse path exists, we still surface the user's
+       exact route. */
+    const ensureEdge = (from: string, to: string, distKm: number) => {
+      const list = g.adjacency.get(from);
+      if (!list) return;
+      if (!list.find((e) => e.to === to)) {
+        list.push({ from, to, distanceKm: distKm });
+      }
+    };
+    ensureEdge(ORIGIN_ID, DEST_ID, directDist);
+    ensureEdge(DEST_ID, ORIGIN_ID, directDist);
+
+    return g;
+  }, [warehouseNodes, originPoint, destPoint]);
+
+  /* ── Step 1: clean baseline paths (no incident effects) ── */
   const cleanPaths: PathResult[] = useMemo(() => {
-    if (source === target) return [];
-    return yenKShortestPaths(baseGraph, source, target, k);
-  }, [baseGraph, source, target, k]);
+    if (!baseGraph) return [];
+    return yenKShortestPaths(baseGraph, ORIGIN_ID, DEST_ID, k);
+  }, [baseGraph, k]);
 
-  /* ── Step 2: detect ONLY the incidents that intersect the active route ── */
+  /* ── Step 2: detect ONLY the incidents that intersect the user's routes ── */
   const onRouteIncidents: Incident[] = useMemo(() => {
-    if (cleanPaths.length === 0) return [];
+    if (!baseGraph || cleanPaths.length === 0) return [];
     const segments: [LatLng, LatLng][] = [];
     for (const p of cleanPaths) {
       for (let i = 0; i < p.nodes.length - 1; i++) {
@@ -245,20 +381,16 @@ export default function RouteFinder() {
     );
   }, [cleanPaths, baseGraph, allIncidents]);
 
-  /* ── Step 3: only on-route incidents affect routing ── */
-  const graph = useMemo(
-    () => applyIncidents(baseGraph, onRouteIncidents),
-    [baseGraph, onRouteIncidents],
-  );
+  /* ── Step 3: re-cost the graph using only on-route incidents ── */
+  const graph = useMemo(() => {
+    if (!baseGraph) return null;
+    return applyIncidents(baseGraph, onRouteIncidents);
+  }, [baseGraph, onRouteIncidents]);
 
   const paths: PathResult[] = useMemo(() => {
-    if (source === target) return [];
-    return yenKShortestPaths(graph, source, target, k);
-  }, [graph, source, target, k]);
-
-  useEffect(() => {
-    setActivePath(0);
-  }, [source, target, k]);
+    if (!graph) return [];
+    return yenKShortestPaths(graph, ORIGIN_ID, DEST_ID, k);
+  }, [graph, k]);
 
   const lastBestRef = useRef<{
     key: string;
@@ -267,9 +399,9 @@ export default function RouteFinder() {
   } | null>(null);
 
   useEffect(() => {
-    if (paths.length === 0) return;
+    if (!graph || paths.length === 0 || !originPoint || !destPoint) return;
     const best = paths[0];
-    const key = `${source}|${target}`;
+    const key = `${originPoint.label}|${destPoint.label}`;
     const currentIncidentIds = onRouteIncidents.map((i) => i.id).sort();
     const prev = lastBestRef.current;
 
@@ -295,8 +427,6 @@ export default function RouteFinder() {
       const alert: RerouteAlert = {
         id: `rr-${Date.now()}`,
         at: Date.now(),
-        source,
-        target,
         before: prev.path,
         after: best,
         trigger,
@@ -314,7 +444,7 @@ export default function RouteFinder() {
     }
 
     lastBestRef.current = { key, path: best, incidentIds: currentIncidentIds };
-  }, [paths, source, target, onRouteIncidents, muted, t]);
+  }, [paths, graph, originPoint, destPoint, onRouteIncidents, muted, t]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !("Notification" in window)) return;
@@ -333,11 +463,21 @@ export default function RouteFinder() {
     setReroutes((cur) => cur.filter((r) => r.id !== id));
   }
 
+  /* ── Map points (for fit-bounds) ── */
   const allMapPoints: LatLng[] = useMemo(() => {
-    const p: LatLng[] = nodes.map((n) => n.position);
+    const p: LatLng[] = [];
+    if (originPoint) p.push(originPoint.position);
+    if (destPoint) p.push(destPoint.position);
+    if (paths.length > 0 && graph) {
+      for (const node of paths[0].nodes) {
+        const n = graph.nodes.get(node);
+        if (n) p.push(n.position);
+      }
+    }
     return p;
-  }, [nodes]);
+  }, [originPoint, destPoint, paths, graph]);
 
+  /* ── OSRM road geometry cache ── */
   const ROAD_CACHE_KEY = "supply-chain.roadGeom.v1";
   const roadGeomRef = useRef<Map<string, LatLng[]>>(
     (() => {
@@ -358,24 +498,43 @@ export default function RouteFinder() {
   const [roadProgress, setRoadProgress] = useState({ done: 0, total: 0 });
 
   useEffect(() => {
-    if (paths.length === 0) return;
+    if (!graph || paths.length === 0) return;
     let cancelled = false;
 
     const edgeKeys = new Set<string>();
+    const userNodeIds = new Set([ORIGIN_ID, DEST_ID]);
     for (const p of paths) {
       for (let i = 0; i < p.nodes.length - 1; i++) {
-        edgeKeys.add(`${p.nodes[i]}|${p.nodes[i + 1]}`);
+        const a = p.nodes[i];
+        const b = p.nodes[i + 1];
+        /* The user origin/dest can move on every search — use a position-keyed
+           cache key for those edges so we don't reuse a stale geometry. */
+        const aKey = userNodeIds.has(a)
+          ? `${a}@${graph.nodes.get(a)?.position.join(",")}`
+          : a;
+        const bKey = userNodeIds.has(b)
+          ? `${b}@${graph.nodes.get(b)?.position.join(",")}`
+          : b;
+        edgeKeys.add(`${aKey}|${bKey}`);
       }
     }
     const cache = roadGeomRef.current;
     const missing = Array.from(edgeKeys).filter((k) => !cache.has(k));
-    setRoadProgress({ done: edgeKeys.size - missing.length, total: edgeKeys.size });
+    setRoadProgress({
+      done: edgeKeys.size - missing.length,
+      total: edgeKeys.size,
+    });
     if (missing.length === 0) return;
 
+    function nodeIdFromCacheKey(k: string): string {
+      return k.includes("@") ? k.split("@")[0] : k;
+    }
+
     async function fetchEdge(key: string): Promise<LatLng[] | null> {
-      const [a, b] = key.split("|");
-      const na = graph.nodes.get(a);
-      const nb = graph.nodes.get(b);
+      const [aKey, bKey] = key.split("|");
+      if (!graph) return null;
+      const na = graph.nodes.get(nodeIdFromCacheKey(aKey));
+      const nb = graph.nodes.get(nodeIdFromCacheKey(bKey));
       if (!na || !nb) return null;
       const url = `https://router.project-osrm.org/route/v1/driving/${na.position[1]},${na.position[0]};${nb.position[1]},${nb.position[0]}?overview=full&geometries=geojson`;
       const controller = new AbortController();
@@ -410,9 +569,9 @@ export default function RouteFinder() {
           if (geom) {
             roadGeomRef.current.set(key, geom);
           } else {
-            const [a, b] = key.split("|");
-            const na = graph.nodes.get(a);
-            const nb = graph.nodes.get(b);
+            const [aKey, bKey] = key.split("|");
+            const na = graph!.nodes.get(nodeIdFromCacheKey(aKey));
+            const nb = graph!.nodes.get(nodeIdFromCacheKey(bKey));
             if (na && nb) roadGeomRef.current.set(key, [na.position, nb.position]);
           }
           completed += 1;
@@ -429,8 +588,11 @@ export default function RouteFinder() {
 
       if (!cancelled) {
         try {
+          /* Don't persist user-specific edges (they bloat the cache). */
           const obj: Record<string, LatLng[]> = {};
-          for (const [k, v] of roadGeomRef.current.entries()) obj[k] = v;
+          for (const [k, v] of roadGeomRef.current.entries()) {
+            if (!k.includes("@")) obj[k] = v;
+          }
           localStorage.setItem(ROAD_CACHE_KEY, JSON.stringify(obj));
         } catch {
           // localStorage might be full; ignore
@@ -445,11 +607,19 @@ export default function RouteFinder() {
 
   function pathPolyline(p: PathResult): LatLng[] {
     void roadGeomTick;
+    if (!graph) return [];
+    const userNodeIds = new Set([ORIGIN_ID, DEST_ID]);
     const out: LatLng[] = [];
     for (let i = 0; i < p.nodes.length - 1; i++) {
       const a = p.nodes[i];
       const b = p.nodes[i + 1];
-      const key = `${a}|${b}`;
+      const aKey = userNodeIds.has(a)
+        ? `${a}@${graph.nodes.get(a)?.position.join(",")}`
+        : a;
+      const bKey = userNodeIds.has(b)
+        ? `${b}@${graph.nodes.get(b)?.position.join(",")}`
+        : b;
+      const key = `${aKey}|${bKey}`;
       const geom = roadGeomRef.current.get(key);
       if (geom && geom.length > 0) {
         if (out.length === 0) out.push(geom[0]);
@@ -481,8 +651,12 @@ export default function RouteFinder() {
     setSimIncidents([]);
   }
 
-  const sourceNode = graph.nodes.get(source);
-  const targetNode = graph.nodes.get(target);
+  function nodeLabel(id: string): string {
+    if (id === ORIGIN_ID) return originPoint?.shortLabel ?? "Origin";
+    if (id === DEST_ID)   return destPoint?.shortLabel ?? "Destination";
+    return graph?.nodes.get(id)?.city ?? graph?.nodes.get(id)?.name ?? id;
+  }
+
   const best = paths[0];
   const onRouteCount = onRouteIncidents.length;
 
@@ -538,45 +712,49 @@ export default function RouteFinder() {
       </div>
 
       <Card>
-        <CardContent className="p-4 grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
-          <div className="flex flex-col gap-1">
+        <CardContent className="p-4 grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+          <div className="md:col-span-4 flex flex-col gap-1">
             <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
               {t("routeFinder.origin")}
             </label>
-            <Select value={source} onValueChange={setSource}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {nodes.map((n) => (
-                  <SelectItem key={n.id} value={n.id}>
-                    {n.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="relative">
+              <span className="absolute left-2.5 top-2.5 h-3 w-3 rounded-full bg-emerald-500 border-2 border-emerald-300 pointer-events-none" />
+              <Input
+                value={originText}
+                onChange={(e) => setOriginText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void runSearch(originText, destText);
+                }}
+                placeholder={t("routeFinder.originPlaceholder")}
+                className="pl-8 h-9 text-sm"
+              />
+            </div>
           </div>
-          <div className="flex flex-col gap-1">
+          <div className="md:col-span-4 flex flex-col gap-1">
             <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
               {t("routeFinder.destination")}
             </label>
-            <Select value={target} onValueChange={setTarget}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {nodes.map((n) => (
-                  <SelectItem key={n.id} value={n.id}>
-                    {n.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="relative">
+              <span className="absolute left-2.5 top-2.5 h-3 w-3 rounded-full bg-red-500 border-2 border-red-300 pointer-events-none" />
+              <Input
+                value={destText}
+                onChange={(e) => setDestText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void runSearch(originText, destText);
+                }}
+                placeholder={t("routeFinder.destPlaceholder")}
+                className="pl-8 h-9 text-sm"
+              />
+            </div>
           </div>
-          <div className="flex flex-col gap-1">
+          <div className="md:col-span-2 flex flex-col gap-1">
             <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
               {t("routeFinder.routesToCompare")}
             </label>
             <Select value={String(k)} onValueChange={(v) => setK(Number(v))}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
               <SelectContent>
-                {[4, 5, 6, 7, 8].map((n) => (
+                {[3, 4, 5, 6, 7, 8].map((n) => (
                   <SelectItem key={n} value={String(n)}>
                     {t("routeFinder.topN", { n })}
                   </SelectItem>
@@ -584,11 +762,52 @@ export default function RouteFinder() {
               </SelectContent>
             </Select>
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={injectSimulatedIncident} className="gap-2 flex-1">
-              <AlertTriangle className="h-4 w-4" /> {t("routeFinder.simIncident")}
+          <div className="md:col-span-2 flex flex-col gap-1">
+            <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono opacity-0">
+              .
+            </label>
+            <Button
+              onClick={() => runSearch(originText, destText)}
+              disabled={searching}
+              className="h-9 gap-2"
+            >
+              {searching ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {t("routeFinder.searching")}
+                </>
+              ) : (
+                <>
+                  <Search className="h-4 w-4" />
+                  {t("routeFinder.findRoutes")}
+                </>
+              )}
             </Button>
-            <Button variant="ghost" onClick={clearSimulated}>
+          </div>
+
+          {(searchError || originPoint || destPoint) && (
+            <div className="md:col-span-12 flex flex-wrap items-center gap-2 text-xs">
+              {searchError && (
+                <span className="text-destructive font-mono">{searchError}</span>
+              )}
+              {!searchError && originPoint && destPoint && (
+                <>
+                  <Badge variant="outline" className="text-[10px] font-mono">
+                    {t("routeFinder.routedVia")} {originPoint.shortLabel} → {destPoint.shortLabel}
+                  </Badge>
+                  <span className="text-muted-foreground text-[10px] truncate">
+                    {originPoint.label} → {destPoint.label}
+                  </span>
+                </>
+              )}
+            </div>
+          )}
+
+          <div className="md:col-span-12 flex gap-2 pt-1">
+            <Button variant="outline" size="sm" onClick={injectSimulatedIncident} className="gap-1">
+              <AlertTriangle className="h-3 w-3" /> {t("routeFinder.simIncident")}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={clearSimulated}>
               {t("routeFinder.clear")}
             </Button>
           </div>
@@ -616,9 +835,7 @@ export default function RouteFinder() {
                     {a.trigger} —{" "}
                     <span className="text-muted-foreground">
                       {t("routeFinder.nowVia")}{" "}
-                      {a.after.nodes
-                        .map((id) => graph.nodes.get(id)?.city ?? id)
-                        .join(" → ")}
+                      {a.after.nodes.map(nodeLabel).join(" → ")}
                     </span>
                   </div>
                   <div className="text-[11px] font-mono text-muted-foreground mt-0.5 flex items-center gap-2">
@@ -703,9 +920,7 @@ export default function RouteFinder() {
                       {(showCompare.before.totalDistance / 60).toFixed(1)} h
                     </div>
                     <div className="mt-2 text-xs">
-                      {showCompare.before.nodes
-                        .map((id) => graph.nodes.get(id)?.city ?? id)
-                        .join(" → ")}
+                      {showCompare.before.nodes.map(nodeLabel).join(" → ")}
                     </div>
                   </div>
                   <div className="border border-primary/40 rounded-md p-3 bg-primary/5">
@@ -731,9 +946,7 @@ export default function RouteFinder() {
                       · {(showCompare.after.totalDistance / 60).toFixed(1)} h
                     </div>
                     <div className="mt-2 text-xs">
-                      {showCompare.after.nodes
-                        .map((id) => graph.nodes.get(id)?.city ?? id)
-                        .join(" → ")}
+                      {showCompare.after.nodes.map(nodeLabel).join(" → ")}
                     </div>
                   </div>
                   <div className="md:col-span-2 text-[11px] font-mono text-muted-foreground border-t border-border pt-2">
@@ -766,18 +979,14 @@ export default function RouteFinder() {
 
               <FitBounds points={allMapPoints} />
 
-              {nodes.map((n) => {
-                const isSrc = n.id === source;
-                const isDst = n.id === target;
-                if (isSrc || isDst) return null;
-                return (
-                  <Marker key={n.id} position={n.position} icon={nodeIcon}>
-                    <LeafletTooltip direction="top" offset={[0, -6]}>
-                      {n.name}
-                    </LeafletTooltip>
-                  </Marker>
-                );
-              })}
+              {/* Show warehouse nodes that are NOT on the active route as small grey markers */}
+              {warehouseNodes.map((n) => (
+                <Marker key={n.id} position={n.position} icon={nodeIcon}>
+                  <LeafletTooltip direction="top" offset={[0, -6]}>
+                    {n.name}
+                  </LeafletTooltip>
+                </Marker>
+              ))}
 
               {paths
                 .map((p, i) => ({ p, i }))
@@ -834,15 +1043,15 @@ export default function RouteFinder() {
                 );
               })}
 
-              {sourceNode && (
+              {originPoint && (
                 <Marker
-                  position={sourceNode.position}
+                  position={originPoint.position}
                   icon={pinIcon("ORIGIN", "#22c55e")}
                 />
               )}
-              {targetNode && (
+              {destPoint && (
                 <Marker
-                  position={targetNode.position}
+                  position={destPoint.position}
                   icon={pinIcon("DEST", "#3b82f6")}
                 />
               )}
@@ -871,8 +1080,8 @@ export default function RouteFinder() {
           <CardContent className="p-0 max-h-[460px] overflow-auto">
             {paths.length === 0 && (
               <div className="p-6 text-sm text-muted-foreground text-center">
-                {source === target
-                  ? t("routeFinder.pickDifferent")
+                {!originPoint || !destPoint
+                  ? t("routeFinder.enterBoth")
                   : t("routeFinder.noPath")}
               </div>
             )}
@@ -922,9 +1131,7 @@ export default function RouteFinder() {
                     )}
                   </div>
                   <div className="mt-1 text-[10px] text-muted-foreground truncate">
-                    {p.nodes
-                      .map((id) => graph.nodes.get(id)?.city ?? id)
-                      .join(" → ")}
+                    {p.nodes.map(nodeLabel).join(" → ")}
                   </div>
                 </button>
               );
