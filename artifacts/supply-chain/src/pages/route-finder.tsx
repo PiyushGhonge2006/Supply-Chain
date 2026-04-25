@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   MapContainer,
   TileLayer,
@@ -39,6 +39,11 @@ import {
   Satellite,
   Activity,
   RefreshCw,
+  BellRing,
+  X,
+  ArrowRight,
+  TrendingUp,
+  TrendingDown,
 } from "lucide-react";
 import {
   buildGraph,
@@ -122,6 +127,17 @@ interface Incident {
   type: string;
 }
 
+interface RerouteAlert {
+  id: string;
+  at: number;
+  source: string;
+  target: string;
+  before: PathResult;
+  after: PathResult;
+  trigger: string;
+  acknowledged: boolean;
+}
+
 function severityNumber(s: string): number {
   switch (s) {
     case "critical": return 5;
@@ -154,6 +170,9 @@ export default function RouteFinder() {
     { id: "sim-0", ...SIM_INCIDENT_POOL[0] },
     { id: "sim-1", ...SIM_INCIDENT_POOL[1] },
   ]);
+  const [reroutes, setReroutes] = useState<RerouteAlert[]>([]);
+  const [showCompare, setShowCompare] = useState<RerouteAlert | null>(null);
+  const [muted, setMuted] = useState(false);
 
   useEffect(() => {
     const t = setInterval(() => setScanTick((x) => x + 1), 4000);
@@ -215,6 +234,74 @@ export default function RouteFinder() {
     setActivePath(0);
   }, [source, target, k]);
 
+  const lastBestRef = useRef<{
+    key: string;
+    path: PathResult;
+    incidentIds: string[];
+  } | null>(null);
+
+  useEffect(() => {
+    if (paths.length === 0) return;
+    const best = paths[0];
+    const key = `${source}|${target}`;
+    const currentIncidentIds = liveIncidents.map((i) => i.id).sort();
+    const prev = lastBestRef.current;
+
+    if (!prev || prev.key !== key) {
+      lastBestRef.current = { key, path: best, incidentIds: currentIncidentIds };
+      return;
+    }
+
+    const samePath =
+      prev.path.nodes.length === best.nodes.length &&
+      prev.path.nodes.every((n, i) => n === best.nodes[i]);
+
+    if (!samePath) {
+      const newIds = currentIncidentIds.filter((id) => !prev.incidentIds.includes(id));
+      const trigger =
+        newIds.length > 0
+          ? liveIncidents.find((i) => i.id === newIds[0])?.title ?? "New incident detected"
+          : "Network conditions changed";
+
+      const alert: RerouteAlert = {
+        id: `rr-${Date.now()}`,
+        at: Date.now(),
+        source,
+        target,
+        before: prev.path,
+        after: best,
+        trigger,
+        acknowledged: false,
+      };
+      setReroutes((cur) => [alert, ...cur].slice(0, 8));
+
+      if (!muted && typeof window !== "undefined" && "Notification" in window) {
+        if (Notification.permission === "granted") {
+          new Notification("Optimal route changed", { body: trigger });
+        }
+      }
+    }
+
+    lastBestRef.current = { key, path: best, incidentIds: currentIncidentIds };
+  }, [paths, source, target, liveIncidents, muted]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    if (Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {});
+    }
+  }, []);
+
+  const unacknowledged = reroutes.filter((r) => !r.acknowledged);
+  function acknowledgeAlert(id: string) {
+    setReroutes((cur) =>
+      cur.map((r) => (r.id === id ? { ...r, acknowledged: true } : r)),
+    );
+  }
+  function dismissAlert(id: string) {
+    setReroutes((cur) => cur.filter((r) => r.id !== id));
+  }
+
   const allMapPoints: LatLng[] = useMemo(() => {
     const p: LatLng[] = nodes.map((n) => n.position);
     return p;
@@ -261,6 +348,20 @@ export default function RouteFinder() {
             <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
             Live Scan {scanTick}
           </Badge>
+          <Button
+            variant={muted ? "outline" : "ghost"}
+            size="sm"
+            onClick={() => setMuted((m) => !m)}
+            title={muted ? "Alerts muted" : "Alerts on"}
+          >
+            <BellRing className={`h-3 w-3 mr-1 ${muted ? "opacity-40" : ""}`} />
+            {muted ? "Muted" : "Alerts"}
+            {unacknowledged.length > 0 && !muted && (
+              <span className="ml-1 inline-flex items-center justify-center text-[9px] font-bold bg-red-500 text-white rounded-full h-4 min-w-4 px-1">
+                {unacknowledged.length}
+              </span>
+            )}
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -336,6 +437,159 @@ export default function RouteFinder() {
           </div>
         </CardContent>
       </Card>
+
+      {unacknowledged.length > 0 && !muted && (
+        <div className="flex flex-col gap-2">
+          {unacknowledged.slice(0, 2).map((a) => {
+            const distDelta = a.after.totalDistance - a.before.totalDistance;
+            const longer = distDelta > 0;
+            return (
+              <div
+                key={a.id}
+                className="border border-red-500/40 bg-red-500/10 rounded-md p-3 flex items-center gap-3 animate-in fade-in slide-in-from-top-2"
+              >
+                <div className="h-9 w-9 rounded-full bg-red-500/20 flex items-center justify-center shrink-0">
+                  <BellRing className="h-4 w-4 text-red-500" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-mono uppercase tracking-wider font-bold text-red-500">
+                    Optimal route changed
+                  </div>
+                  <div className="text-sm truncate">
+                    {a.trigger} —{" "}
+                    <span className="text-muted-foreground">
+                      now via{" "}
+                      {a.after.nodes
+                        .map((id) => graph.nodes.get(id)?.city ?? id)
+                        .join(" → ")}
+                    </span>
+                  </div>
+                  <div className="text-[11px] font-mono text-muted-foreground mt-0.5 flex items-center gap-2">
+                    {longer ? (
+                      <span className="text-red-400 flex items-center gap-1">
+                        <TrendingUp className="h-3 w-3" />+{distDelta.toFixed(0)} km
+                      </span>
+                    ) : (
+                      <span className="text-green-400 flex items-center gap-1">
+                        <TrendingDown className="h-3 w-3" />
+                        {distDelta.toFixed(0)} km
+                      </span>
+                    )}
+                    <span>·</span>
+                    <span>{new Date(a.at).toLocaleTimeString()}</span>
+                  </div>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowCompare(a)}
+                >
+                  Compare
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => acknowledgeAlert(a.id)}
+                >
+                  Ack
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => dismissAlert(a.id)}
+                >
+                  <X className="h-3 w-3" />
+                </Button>
+              </div>
+            );
+          })}
+          {unacknowledged.length > 2 && (
+            <div className="text-[11px] font-mono text-muted-foreground px-1">
+              + {unacknowledged.length - 2} more re-route alert(s)
+            </div>
+          )}
+        </div>
+      )}
+
+      {showCompare && (
+        <Card className="border-primary/40">
+          <CardHeader className="pb-2 flex flex-row items-center justify-between">
+            <CardTitle className="text-sm font-mono uppercase tracking-wider flex items-center gap-2">
+              <ArrowRight className="h-4 w-4" /> Before / After re-route
+            </CardTitle>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setShowCompare(null)}
+            >
+              <X className="h-3 w-3" />
+            </Button>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {(() => {
+              const distDelta = showCompare.after.totalDistance - showCompare.before.totalDistance;
+              const stopsDelta = showCompare.after.nodes.length - showCompare.before.nodes.length;
+              return (
+                <>
+                  <div className="border border-border rounded-md p-3 bg-secondary/30">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="h-2 w-2 rounded-full bg-muted-foreground" />
+                      <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                        Before — original optimal
+                      </span>
+                    </div>
+                    <div className="text-lg font-bold">
+                      {showCompare.before.totalDistance.toFixed(0)} km
+                    </div>
+                    <div className="text-[11px] font-mono text-muted-foreground">
+                      {showCompare.before.nodes.length} stops ·{" "}
+                      {(showCompare.before.totalDistance / 60).toFixed(1)} h
+                    </div>
+                    <div className="mt-2 text-xs">
+                      {showCompare.before.nodes
+                        .map((id) => graph.nodes.get(id)?.city ?? id)
+                        .join(" → ")}
+                    </div>
+                  </div>
+                  <div className="border border-primary/40 rounded-md p-3 bg-primary/5">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+                      <span className="font-mono text-[10px] uppercase tracking-wider text-green-500">
+                        After — new optimal
+                      </span>
+                    </div>
+                    <div className="text-lg font-bold flex items-center gap-2">
+                      {showCompare.after.totalDistance.toFixed(0)} km
+                      <span
+                        className={`text-xs ${distDelta > 0 ? "text-red-400" : "text-green-400"}`}
+                      >
+                        ({distDelta > 0 ? "+" : ""}
+                        {distDelta.toFixed(0)} km)
+                      </span>
+                    </div>
+                    <div className="text-[11px] font-mono text-muted-foreground">
+                      {showCompare.after.nodes.length} stops{" "}
+                      {stopsDelta !== 0 &&
+                        `(${stopsDelta > 0 ? "+" : ""}${stopsDelta})`}{" "}
+                      · {(showCompare.after.totalDistance / 60).toFixed(1)} h
+                    </div>
+                    <div className="mt-2 text-xs">
+                      {showCompare.after.nodes
+                        .map((id) => graph.nodes.get(id)?.city ?? id)
+                        .join(" → ")}
+                    </div>
+                  </div>
+                  <div className="md:col-span-2 text-[11px] font-mono text-muted-foreground border-t border-border pt-2">
+                    Trigger: <span className="text-foreground">{showCompare.trigger}</span>
+                    {" · "}
+                    {new Date(showCompare.at).toLocaleString()}
+                  </div>
+                </>
+              );
+            })()}
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card className="lg:col-span-2 overflow-hidden">
