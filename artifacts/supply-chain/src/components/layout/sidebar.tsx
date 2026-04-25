@@ -1,4 +1,4 @@
-import { Box, Home, Activity, Route, BarChart2, MapPin, Map } from "lucide-react";
+import { Box, Home, Activity, Route, BarChart2, MapPin, Map, Navigation } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import {
   Sidebar,
@@ -18,6 +18,7 @@ const navItems = [
   { title: "Shipments", url: "/shipments", icon: Box },
   { title: "Disruptions", url: "/disruptions", icon: Activity },
   { title: "Route Optimizer", url: "/routes", icon: Route },
+  { title: "Route Finder", url: "/route-finder", icon: Navigation },
   { title: "Warehouses & Ports", url: "/warehouses", icon: MapPin },
   { title: "Analytics", url: "/analytics", icon: BarChart2 },
 ];
