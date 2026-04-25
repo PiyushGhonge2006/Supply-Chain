@@ -307,10 +307,132 @@ export default function RouteFinder() {
     return p;
   }, [nodes]);
 
+  const ROAD_CACHE_KEY = "supply-chain.roadGeom.v1";
+  const roadGeomRef = useRef<Map<string, LatLng[]>>(
+    (() => {
+      const m = new Map<string, LatLng[]>();
+      try {
+        const raw = localStorage.getItem(ROAD_CACHE_KEY);
+        if (raw) {
+          const obj = JSON.parse(raw) as Record<string, LatLng[]>;
+          for (const [k, v] of Object.entries(obj)) m.set(k, v);
+        }
+      } catch {
+        // ignore
+      }
+      return m;
+    })(),
+  );
+  const [roadGeomTick, setRoadGeomTick] = useState(0);
+  const [roadProgress, setRoadProgress] = useState({ done: 0, total: 0 });
+
+  useEffect(() => {
+    if (paths.length === 0) return;
+    let cancelled = false;
+
+    const edgeKeys = new Set<string>();
+    for (const p of paths) {
+      for (let i = 0; i < p.nodes.length - 1; i++) {
+        edgeKeys.add(`${p.nodes[i]}|${p.nodes[i + 1]}`);
+      }
+    }
+    const cache = roadGeomRef.current;
+    const missing = Array.from(edgeKeys).filter((k) => !cache.has(k));
+    setRoadProgress({ done: edgeKeys.size - missing.length, total: edgeKeys.size });
+    if (missing.length === 0) return;
+
+    async function fetchEdge(key: string): Promise<LatLng[] | null> {
+      const [a, b] = key.split("|");
+      const na = graph.nodes.get(a);
+      const nb = graph.nodes.get(b);
+      if (!na || !nb) return null;
+      const url = `https://router.project-osrm.org/route/v1/driving/${na.position[1]},${na.position[0]};${nb.position[1]},${nb.position[0]}?overview=full&geometries=geojson`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      try {
+        const r = await fetch(url, { signal: controller.signal });
+        if (!r.ok) return null;
+        const data = await r.json();
+        const coords = data?.routes?.[0]?.geometry?.coordinates;
+        if (!Array.isArray(coords) || coords.length === 0) return null;
+        return coords.map(
+          ([lon, lat]: [number, number]) => [lat, lon] as LatLng,
+        );
+      } catch {
+        return null;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    (async () => {
+      const concurrency = 2;
+      const queue = [...missing];
+      let completed = edgeKeys.size - missing.length;
+
+      async function worker() {
+        while (queue.length > 0) {
+          if (cancelled) return;
+          const key = queue.shift()!;
+          const geom = await fetchEdge(key);
+          if (cancelled) return;
+          if (geom) {
+            roadGeomRef.current.set(key, geom);
+          } else {
+            const [a, b] = key.split("|");
+            const na = graph.nodes.get(a);
+            const nb = graph.nodes.get(b);
+            if (na && nb) roadGeomRef.current.set(key, [na.position, nb.position]);
+          }
+          completed += 1;
+          setRoadProgress({ done: completed, total: edgeKeys.size });
+          setRoadGeomTick((t) => t + 1);
+        }
+      }
+
+      await Promise.all(
+        Array(Math.min(concurrency, queue.length))
+          .fill(null)
+          .map(() => worker()),
+      );
+
+      if (!cancelled) {
+        try {
+          const obj: Record<string, LatLng[]> = {};
+          for (const [k, v] of roadGeomRef.current.entries()) obj[k] = v;
+          localStorage.setItem(ROAD_CACHE_KEY, JSON.stringify(obj));
+        } catch {
+          // localStorage might be full; ignore
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [paths, graph]);
+
   function pathPolyline(p: PathResult): LatLng[] {
-    return p.nodes
-      .map((id) => graph.nodes.get(id)?.position)
-      .filter(Boolean) as LatLng[];
+    void roadGeomTick;
+    const out: LatLng[] = [];
+    for (let i = 0; i < p.nodes.length - 1; i++) {
+      const a = p.nodes[i];
+      const b = p.nodes[i + 1];
+      const key = `${a}|${b}`;
+      const geom = roadGeomRef.current.get(key);
+      if (geom && geom.length > 0) {
+        if (out.length === 0) out.push(geom[0]);
+        for (let j = 1; j < geom.length; j++) out.push(geom[j]);
+      } else {
+        const na = graph.nodes.get(a);
+        const nb = graph.nodes.get(b);
+        if (na && nb) {
+          if (out.length === 0) out.push(na.position);
+          out.push(nb.position);
+        }
+      }
+    }
+    return out;
   }
 
   function injectSimulatedIncident() {
@@ -344,6 +466,12 @@ export default function RouteFinder() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {roadProgress.total > 0 && roadProgress.done < roadProgress.total && (
+            <Badge variant="outline" className="font-mono text-[10px] uppercase flex items-center gap-1">
+              <RefreshCw className="h-3 w-3 animate-spin" />
+              Roads {roadProgress.done}/{roadProgress.total}
+            </Badge>
+          )}
           <Badge variant="outline" className="font-mono text-[10px] uppercase flex items-center gap-1">
             <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
             Live Scan {scanTick}
@@ -638,7 +766,7 @@ export default function RouteFinder() {
                   const color = i === 0 ? PATH_COLORS[0] : PATH_COLORS[i % PATH_COLORS.length];
                   return (
                     <Polyline
-                      key={`path-${i}-${scanTick}`}
+                      key={`path-${i}-${scanTick}-${roadGeomTick}`}
                       positions={pathPolyline(p)}
                       pathOptions={{
                         color,

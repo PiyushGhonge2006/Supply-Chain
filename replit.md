@@ -30,6 +30,8 @@ A full-stack real-time supply chain monitoring and optimization platform. Provid
 - `/shipments/:id` — Shipment detail view
 - `/disruptions` — Disruption alerts (weather, port congestion, strikes, etc.)
 - `/routes` — Route optimizer with cost/time tradeoffs
+- `/route-finder` — Multi-path Dijkstra/Yen's K-shortest with satellite map, OSRM road-following polylines, incident-aware re-routing, before/after compare
+- `/map` — World map with road-following routes via OSRM
 - `/analytics` — Charts: delay forecast, disruption trends, cost breakdown
 - `/warehouses` — Warehouse and port congestion monitoring
 
