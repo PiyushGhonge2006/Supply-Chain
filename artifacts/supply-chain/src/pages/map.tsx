@@ -348,7 +348,7 @@ export default function MapPage() {
                   </div>
                   <div className="border-t border-border/50 pt-2">
                     <div className="flex items-center gap-1.5 mb-2">
-                      <Ruler className="h-3 w-3 text-primary" />
+                      <PencilRuler className="h-3 w-3 text-primary" />
                       <span className="text-muted-foreground">Distance:</span>
                       <span className="font-mono font-bold text-primary">{distKm.toLocaleString()} km</span>
                     </div>
