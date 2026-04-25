@@ -201,8 +201,28 @@ export default function MapPage() {
 
     const fromPt: [number, number] = [parseFloat(og.lat), parseFloat(og.lon)];
     const toPt:   [number, number] = [parseFloat(dg.lat), parseFloat(dg.lon)];
-    const path = greatCircle(fromPt, toPt);
-    const km   = haversineKm(fromPt, toPt);
+
+    let path: [number, number][] = greatCircle(fromPt, toPt);
+    let km   = haversineKm(fromPt, toPt);
+
+    try {
+      const url = `https://router.project-osrm.org/route/v1/driving/${fromPt[1]},${fromPt[0]};${toPt[1]},${toPt[0]}?overview=full&geometries=geojson`;
+      const resp = await fetch(url);
+      if (resp.ok) {
+        const data = await resp.json();
+        const route = data?.routes?.[0];
+        if (route?.geometry?.coordinates?.length) {
+          path = route.geometry.coordinates.map(
+            ([lon, lat]: [number, number]) => [lat, lon] as [number, number],
+          );
+          if (typeof route.distance === "number") {
+            km = route.distance / 1000;
+          }
+        }
+      }
+    } catch {
+      // fall back to great-circle if OSRM is unreachable
+    }
 
     setRoutePath(path);
     setDistKm(km);
