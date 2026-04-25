@@ -5,12 +5,12 @@ import {
   Marker,
   Polyline,
   CircleMarker,
-  LayersControl,
   Tooltip as LeafletTooltip,
   useMap,
 } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { useTranslation } from "react-i18next";
 import {
   useListWarehouses,
   useListDisruptions,
@@ -36,7 +36,6 @@ import {
   AlertTriangle,
   Clock,
   Route as RouteIcon,
-  Satellite,
   Activity,
   RefreshCw,
   BellRing,
@@ -49,6 +48,7 @@ import {
   buildGraph,
   applyIncidents,
   yenKShortestPaths,
+  distancePointToSegmentKm,
   type GraphNode,
   type LatLng,
   type PathResult,
@@ -157,6 +157,7 @@ const SIM_INCIDENT_POOL: Omit<Incident, "id">[] = [
 ];
 
 export default function RouteFinder() {
+  const { t } = useTranslation();
   const { data: warehouses } = useListWarehouses();
   const { data: disruptions, refetch: refetchDisruptions } = useListDisruptions({});
 
@@ -164,7 +165,6 @@ export default function RouteFinder() {
   const [target, setTarget] = useState<string>("del");
   const [k, setK] = useState<number>(6);
   const [activePath, setActivePath] = useState<number>(0);
-  const [satellite, setSatellite] = useState<boolean>(true);
   const [scanTick, setScanTick] = useState(0);
   const [simIncidents, setSimIncidents] = useState<Incident[]>([
     { id: "sim-0", ...SIM_INCIDENT_POOL[0] },
@@ -199,7 +199,7 @@ export default function RouteFinder() {
       setTarget(nodes[nodes.length - 1].id);
   }, [nodes, source, target]);
 
-  const liveIncidents: Incident[] = useMemo(() => {
+  const allIncidents: Incident[] = useMemo(() => {
     const out: Incident[] = [...simIncidents];
     (disruptions ?? []).forEach((d: any, i: number) => {
       if (d.resolved) return;
@@ -220,9 +220,35 @@ export default function RouteFinder() {
     () => buildGraph(nodes, { maxNeighbors: 5 }),
     [nodes],
   );
+
+  /* ── Step 1: compute clean baseline path (no incident effects) ── */
+  const cleanPaths: PathResult[] = useMemo(() => {
+    if (source === target) return [];
+    return yenKShortestPaths(baseGraph, source, target, k);
+  }, [baseGraph, source, target, k]);
+
+  /* ── Step 2: detect ONLY the incidents that intersect the active route ── */
+  const onRouteIncidents: Incident[] = useMemo(() => {
+    if (cleanPaths.length === 0) return [];
+    const segments: [LatLng, LatLng][] = [];
+    for (const p of cleanPaths) {
+      for (let i = 0; i < p.nodes.length - 1; i++) {
+        const a = baseGraph.nodes.get(p.nodes[i]);
+        const b = baseGraph.nodes.get(p.nodes[i + 1]);
+        if (a && b) segments.push([a.position, b.position]);
+      }
+    }
+    return allIncidents.filter((inc) =>
+      segments.some(
+        ([a, b]) => distancePointToSegmentKm(inc.position, a, b) <= inc.radiusKm,
+      ),
+    );
+  }, [cleanPaths, baseGraph, allIncidents]);
+
+  /* ── Step 3: only on-route incidents affect routing ── */
   const graph = useMemo(
-    () => applyIncidents(baseGraph, liveIncidents),
-    [baseGraph, liveIncidents],
+    () => applyIncidents(baseGraph, onRouteIncidents),
+    [baseGraph, onRouteIncidents],
   );
 
   const paths: PathResult[] = useMemo(() => {
@@ -244,7 +270,7 @@ export default function RouteFinder() {
     if (paths.length === 0) return;
     const best = paths[0];
     const key = `${source}|${target}`;
-    const currentIncidentIds = liveIncidents.map((i) => i.id).sort();
+    const currentIncidentIds = onRouteIncidents.map((i) => i.id).sort();
     const prev = lastBestRef.current;
 
     if (!prev || prev.key !== key) {
@@ -257,11 +283,14 @@ export default function RouteFinder() {
       prev.path.nodes.every((n, i) => n === best.nodes[i]);
 
     if (!samePath) {
-      const newIds = currentIncidentIds.filter((id) => !prev.incidentIds.includes(id));
+      const newIds = currentIncidentIds.filter(
+        (id) => !prev.incidentIds.includes(id),
+      );
       const trigger =
         newIds.length > 0
-          ? liveIncidents.find((i) => i.id === newIds[0])?.title ?? "New incident detected"
-          : "Network conditions changed";
+          ? onRouteIncidents.find((i) => i.id === newIds[0])?.title ??
+            t("routeFinder.newIncidentDetected")
+          : t("routeFinder.networkChanged");
 
       const alert: RerouteAlert = {
         id: `rr-${Date.now()}`,
@@ -277,13 +306,15 @@ export default function RouteFinder() {
 
       if (!muted && typeof window !== "undefined" && "Notification" in window) {
         if (Notification.permission === "granted") {
-          new Notification("Optimal route changed", { body: trigger });
+          new Notification(t("routeFinder.optimalRouteChanged"), {
+            body: trigger,
+          });
         }
       }
     }
 
     lastBestRef.current = { key, path: best, incidentIds: currentIncidentIds };
-  }, [paths, source, target, liveIncidents, muted]);
+  }, [paths, source, target, onRouteIncidents, muted, t]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !("Notification" in window)) return;
@@ -453,37 +484,43 @@ export default function RouteFinder() {
   const sourceNode = graph.nodes.get(source);
   const targetNode = graph.nodes.get(target);
   const best = paths[0];
+  const onRouteCount = onRouteIncidents.length;
 
   return (
     <div className="flex flex-col gap-6 w-full max-w-7xl mx-auto">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight mb-1 flex items-center gap-2">
-            <RouteIcon className="h-6 w-6" /> Route Finder
+            <RouteIcon className="h-6 w-6" /> {t("routeFinder.title")}
           </h1>
           <p className="text-sm text-muted-foreground">
-            Multi-path discovery with live incident-aware re-routing
+            {t("routeFinder.subtitle")}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {onRouteCount > 0 && (
+            <Badge variant="destructive" className="font-mono text-[10px] uppercase flex items-center gap-1">
+              <AlertTriangle className="h-3 w-3" />
+              {t("routeFinder.onRouteDetected", { n: onRouteCount })}
+            </Badge>
+          )}
           {roadProgress.total > 0 && roadProgress.done < roadProgress.total && (
             <Badge variant="outline" className="font-mono text-[10px] uppercase flex items-center gap-1">
               <RefreshCw className="h-3 w-3 animate-spin" />
-              Roads {roadProgress.done}/{roadProgress.total}
+              {t("routeFinder.roads", { done: roadProgress.done, total: roadProgress.total })}
             </Badge>
           )}
           <Badge variant="outline" className="font-mono text-[10px] uppercase flex items-center gap-1">
             <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-            Live Scan {scanTick}
+            {t("routeFinder.liveScan", { tick: scanTick })}
           </Badge>
           <Button
             variant={muted ? "outline" : "ghost"}
             size="sm"
             onClick={() => setMuted((m) => !m)}
-            title={muted ? "Alerts muted" : "Alerts on"}
           >
             <BellRing className={`h-3 w-3 mr-1 ${muted ? "opacity-40" : ""}`} />
-            {muted ? "Muted" : "Alerts"}
+            {muted ? t("routeFinder.muted") : t("routeFinder.alerts")}
             {unacknowledged.length > 0 && !muted && (
               <span className="ml-1 inline-flex items-center justify-center text-[9px] font-bold bg-red-500 text-white rounded-full h-4 min-w-4 px-1">
                 {unacknowledged.length}
@@ -495,16 +532,16 @@ export default function RouteFinder() {
             size="sm"
             onClick={() => refetchDisruptions()}
           >
-            <RefreshCw className="h-3 w-3 mr-1" /> Refresh feed
+            <RefreshCw className="h-3 w-3 mr-1" /> {t("routeFinder.refreshFeed")}
           </Button>
         </div>
       </div>
 
       <Card>
-        <CardContent className="p-4 grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+        <CardContent className="p-4 grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
           <div className="flex flex-col gap-1">
             <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
-              Origin
+              {t("routeFinder.origin")}
             </label>
             <Select value={source} onValueChange={setSource}>
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -519,7 +556,7 @@ export default function RouteFinder() {
           </div>
           <div className="flex flex-col gap-1">
             <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
-              Destination
+              {t("routeFinder.destination")}
             </label>
             <Select value={target} onValueChange={setTarget}>
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -534,33 +571,25 @@ export default function RouteFinder() {
           </div>
           <div className="flex flex-col gap-1">
             <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
-              Routes to compare
+              {t("routeFinder.routesToCompare")}
             </label>
             <Select value={String(k)} onValueChange={(v) => setK(Number(v))}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 {[4, 5, 6, 7, 8].map((n) => (
                   <SelectItem key={n} value={String(n)}>
-                    Top {n}
+                    {t("routeFinder.topN", { n })}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
-          <Button
-            variant={satellite ? "default" : "outline"}
-            onClick={() => setSatellite((s) => !s)}
-            className="gap-2"
-          >
-            <Satellite className="h-4 w-4" />
-            {satellite ? "Satellite" : "Streets"}
-          </Button>
           <div className="flex gap-2">
             <Button variant="outline" onClick={injectSimulatedIncident} className="gap-2 flex-1">
-              <AlertTriangle className="h-4 w-4" /> Sim incident
+              <AlertTriangle className="h-4 w-4" /> {t("routeFinder.simIncident")}
             </Button>
             <Button variant="ghost" onClick={clearSimulated}>
-              Clear
+              {t("routeFinder.clear")}
             </Button>
           </div>
         </CardContent>
@@ -581,12 +610,12 @@ export default function RouteFinder() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-xs font-mono uppercase tracking-wider font-bold text-red-500">
-                    Optimal route changed
+                    {t("routeFinder.optimalRouteChanged")}
                   </div>
                   <div className="text-sm truncate">
                     {a.trigger} —{" "}
                     <span className="text-muted-foreground">
-                      now via{" "}
+                      {t("routeFinder.nowVia")}{" "}
                       {a.after.nodes
                         .map((id) => graph.nodes.get(id)?.city ?? id)
                         .join(" → ")}
@@ -612,14 +641,14 @@ export default function RouteFinder() {
                   size="sm"
                   onClick={() => setShowCompare(a)}
                 >
-                  Compare
+                  {t("routeFinder.compare")}
                 </Button>
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => acknowledgeAlert(a.id)}
                 >
-                  Ack
+                  {t("routeFinder.ack")}
                 </Button>
                 <Button
                   variant="ghost"
@@ -633,7 +662,7 @@ export default function RouteFinder() {
           })}
           {unacknowledged.length > 2 && (
             <div className="text-[11px] font-mono text-muted-foreground px-1">
-              + {unacknowledged.length - 2} more re-route alert(s)
+              {t("routeFinder.moreReroutes", { n: unacknowledged.length - 2 })}
             </div>
           )}
         </div>
@@ -643,7 +672,7 @@ export default function RouteFinder() {
         <Card className="border-primary/40">
           <CardHeader className="pb-2 flex flex-row items-center justify-between">
             <CardTitle className="text-sm font-mono uppercase tracking-wider flex items-center gap-2">
-              <ArrowRight className="h-4 w-4" /> Before / After re-route
+              <ArrowRight className="h-4 w-4" /> {t("routeFinder.beforeAfter")}
             </CardTitle>
             <Button
               variant="ghost"
@@ -663,14 +692,14 @@ export default function RouteFinder() {
                     <div className="flex items-center gap-2 mb-2">
                       <span className="h-2 w-2 rounded-full bg-muted-foreground" />
                       <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                        Before — original optimal
+                        {t("routeFinder.beforeOriginal")}
                       </span>
                     </div>
                     <div className="text-lg font-bold">
                       {showCompare.before.totalDistance.toFixed(0)} km
                     </div>
                     <div className="text-[11px] font-mono text-muted-foreground">
-                      {showCompare.before.nodes.length} stops ·{" "}
+                      {showCompare.before.nodes.length} {t("routeFinder.stops")} ·{" "}
                       {(showCompare.before.totalDistance / 60).toFixed(1)} h
                     </div>
                     <div className="mt-2 text-xs">
@@ -683,7 +712,7 @@ export default function RouteFinder() {
                     <div className="flex items-center gap-2 mb-2">
                       <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
                       <span className="font-mono text-[10px] uppercase tracking-wider text-green-500">
-                        After — new optimal
+                        {t("routeFinder.afterNew")}
                       </span>
                     </div>
                     <div className="text-lg font-bold flex items-center gap-2">
@@ -696,7 +725,7 @@ export default function RouteFinder() {
                       </span>
                     </div>
                     <div className="text-[11px] font-mono text-muted-foreground">
-                      {showCompare.after.nodes.length} stops{" "}
+                      {showCompare.after.nodes.length} {t("routeFinder.stops")}{" "}
                       {stopsDelta !== 0 &&
                         `(${stopsDelta > 0 ? "+" : ""}${stopsDelta})`}{" "}
                       · {(showCompare.after.totalDistance / 60).toFixed(1)} h
@@ -708,7 +737,7 @@ export default function RouteFinder() {
                     </div>
                   </div>
                   <div className="md:col-span-2 text-[11px] font-mono text-muted-foreground border-t border-border pt-2">
-                    Trigger: <span className="text-foreground">{showCompare.trigger}</span>
+                    {t("routeFinder.trigger")} <span className="text-foreground">{showCompare.trigger}</span>
                     {" · "}
                     {new Date(showCompare.at).toLocaleString()}
                   </div>
@@ -726,22 +755,14 @@ export default function RouteFinder() {
               center={[22.5, 79]}
               zoom={5}
               scrollWheelZoom
-              style={{ height: "100%", width: "100%", background: "#0b0f17" }}
+              worldCopyJump
+              style={{ height: "100%", width: "100%" }}
             >
-              <LayersControl position="topright">
-                <LayersControl.BaseLayer checked={satellite} name="Satellite">
-                  <TileLayer
-                    attribution='Tiles &copy; Esri'
-                    url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                  />
-                </LayersControl.BaseLayer>
-                <LayersControl.BaseLayer checked={!satellite} name="Streets">
-                  <TileLayer
-                    attribution='&copy; OpenStreetMap'
-                    url="https://{s}.tile.openstreetmap.org/{z}/{y}/{x}.png"
-                  />
-                </LayersControl.BaseLayer>
-              </LayersControl>
+              <TileLayer
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                maxZoom={18}
+              />
 
               <FitBounds points={allMapPoints} />
 
@@ -779,27 +800,39 @@ export default function RouteFinder() {
                   );
                 })}
 
-              {liveIncidents.map((inc) => (
-                <CircleMarker
-                  key={inc.id}
-                  center={inc.position}
-                  radius={8 + inc.severity}
-                  pathOptions={{
-                    color: "#ef4444",
-                    fillColor: "#ef4444",
-                    fillOpacity: 0.35 + (scanTick % 2) * 0.25,
-                    weight: 2,
-                  }}
-                >
-                  <LeafletTooltip direction="top" offset={[0, -4]}>
-                    <div className="font-mono text-[10px]">
-                      <div className="font-bold uppercase">{inc.type}</div>
-                      <div>{inc.title}</div>
-                      <div>radius: {inc.radiusKm} km</div>
-                    </div>
-                  </LeafletTooltip>
-                </CircleMarker>
-              ))}
+              {/* On-route incidents in red, off-route in muted gray */}
+              {allIncidents.map((inc) => {
+                const isOnRoute = onRouteIncidents.some((i) => i.id === inc.id);
+                return (
+                  <CircleMarker
+                    key={inc.id}
+                    center={inc.position}
+                    radius={isOnRoute ? 8 + inc.severity : 6}
+                    pathOptions={{
+                      color: isOnRoute ? "#ef4444" : "#64748b",
+                      fillColor: isOnRoute ? "#ef4444" : "#64748b",
+                      fillOpacity: isOnRoute
+                        ? 0.35 + (scanTick % 2) * 0.25
+                        : 0.18,
+                      weight: isOnRoute ? 2 : 1,
+                      dashArray: isOnRoute ? undefined : "3 3",
+                    }}
+                  >
+                    <LeafletTooltip direction="top" offset={[0, -4]}>
+                      <div className="font-mono text-[10px]">
+                        <div className="font-bold uppercase">{inc.type}</div>
+                        <div>{inc.title}</div>
+                        <div>radius: {inc.radiusKm} km</div>
+                        {isOnRoute && (
+                          <div className="text-red-500 font-bold mt-0.5">
+                            {t("routeFinder.incidentOnRoute")}
+                          </div>
+                        )}
+                      </div>
+                    </LeafletTooltip>
+                  </CircleMarker>
+                );
+              })}
 
               {sourceNode && (
                 <Marker
@@ -817,13 +850,13 @@ export default function RouteFinder() {
 
             <div className="absolute bottom-3 left-3 z-[400] bg-background/85 backdrop-blur border border-border rounded px-3 py-2 text-[10px] font-mono uppercase tracking-wider flex items-center gap-3">
               <span className="flex items-center gap-1">
-                <span className="h-2 w-2 rounded-full bg-green-500" /> Optimal
+                <span className="h-2 w-2 rounded-full bg-green-500" /> {t("routeFinder.legend.optimal")}
               </span>
               <span className="flex items-center gap-1">
-                <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" /> Incident
+                <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" /> {t("routeFinder.legend.incident")}
               </span>
               <span className="flex items-center gap-1">
-                <Activity className="h-3 w-3" /> {liveIncidents.length} active
+                <Activity className="h-3 w-3" /> {t("routeFinder.legend.active", { n: onRouteIncidents.length })}
               </span>
             </div>
           </div>
@@ -832,15 +865,15 @@ export default function RouteFinder() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-mono uppercase tracking-wider flex items-center gap-2">
-              <Navigation className="h-4 w-4" /> {paths.length} Routes Found
+              <Navigation className="h-4 w-4" /> {t("routeFinder.routesFound", { n: paths.length })}
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0 max-h-[460px] overflow-auto">
             {paths.length === 0 && (
               <div className="p-6 text-sm text-muted-foreground text-center">
                 {source === target
-                  ? "Pick different origin and destination."
-                  : "No path available — too many incidents block the network."}
+                  ? t("routeFinder.pickDifferent")
+                  : t("routeFinder.noPath")}
               </div>
             )}
             {paths.map((p, i) => {
@@ -859,21 +892,21 @@ export default function RouteFinder() {
                         style={{ background: color }}
                       />
                       <span className="font-mono text-xs font-bold uppercase">
-                        Route {i + 1}
+                        {t("routeFinder.routeN", { n: i + 1 })}
                       </span>
                       {i === 0 && (
                         <Badge className="text-[9px] py-0 h-4 bg-primary text-primary-foreground flex items-center gap-1">
-                          <Zap className="h-2.5 w-2.5" /> Optimal
+                          <Zap className="h-2.5 w-2.5" /> {t("routeFinder.optimal")}
                         </Badge>
                       )}
                       {p.affectedByIncidents && (
                         <Badge variant="destructive" className="text-[9px] py-0 h-4 flex items-center gap-1">
-                          <AlertTriangle className="h-2.5 w-2.5" /> Incident
+                          <AlertTriangle className="h-2.5 w-2.5" /> {t("routeFinder.incident")}
                         </Badge>
                       )}
                     </div>
                     <span className="font-mono text-[10px] text-muted-foreground">
-                      {p.nodes.length} stops
+                      {p.nodes.length} {t("routeFinder.stops")}
                     </span>
                   </div>
                   <div className="flex items-center gap-3 text-[11px] font-mono text-muted-foreground">

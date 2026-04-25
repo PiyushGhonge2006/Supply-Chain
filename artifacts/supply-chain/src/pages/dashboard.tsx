@@ -1,10 +1,12 @@
 import { useGetDashboardSummary, useListDisruptions, useGetRiskScores } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Activity, AlertTriangle, CheckCircle2, Box, Package, DollarSign } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, Box } from "lucide-react";
 import { Link } from "wouter";
+import { useTranslation } from "react-i18next";
 
 export default function Dashboard() {
+  const { t } = useTranslation();
   const { data: summary, isLoading: isLoadingSummary } = useGetDashboardSummary();
   const { data: disruptions, isLoading: isLoadingDisruptions } = useListDisruptions({ limit: 5 } as any);
   const { data: riskScores, isLoading: isLoadingRisks } = useGetRiskScores();
@@ -12,8 +14,8 @@ export default function Dashboard() {
   return (
     <div className="flex flex-col gap-6 w-full max-w-7xl mx-auto">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight mb-1">Global Command Center</h1>
-        <p className="text-sm text-muted-foreground">Real-time logistics overview</p>
+        <h1 className="text-2xl font-bold tracking-tight mb-1">{t("dashboard.title")}</h1>
+        <p className="text-sm text-muted-foreground">{t("dashboard.subtitle")}</p>
       </div>
 
       {isLoadingSummary ? (
@@ -34,52 +36,52 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <Card className="bg-card border-l-4 border-l-primary">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider font-mono">Active Shipments</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider font-mono">{t("dashboard.activeShipments")}</CardTitle>
               <Box className="h-4 w-4 text-primary" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{summary.activeShipments.toLocaleString()}</div>
               <p className="text-xs text-muted-foreground mt-1">
-                <span className="text-emerald-500 font-medium">{summary.deliveredToday.toLocaleString()}</span> delivered today
+                {t("dashboard.deliveredToday", { count: summary.deliveredToday })}
               </p>
             </CardContent>
           </Card>
           
           <Card className="bg-card border-l-4 border-l-destructive">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider font-mono">At Risk</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider font-mono">{t("dashboard.atRisk")}</CardTitle>
               <AlertTriangle className="h-4 w-4 text-destructive" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-destructive">{summary.atRiskShipments.toLocaleString()}</div>
               <p className="text-xs text-muted-foreground mt-1">
-                {summary.delayedShipments.toLocaleString()} currently delayed
+                {t("dashboard.currentlyDelayed", { count: summary.delayedShipments })}
               </p>
             </CardContent>
           </Card>
           
           <Card className="bg-card border-l-4 border-l-warning">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider font-mono">Active Disruptions</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider font-mono">{t("dashboard.activeDisruptions")}</CardTitle>
               <Activity className="h-4 w-4 text-warning" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{summary.activeDisruptions.toLocaleString()}</div>
               <p className="text-xs text-muted-foreground mt-1">
-                <span className="text-destructive font-medium">{summary.criticalDisruptions.toLocaleString()}</span> critical
+                {t("dashboard.critical", { count: summary.criticalDisruptions })}
               </p>
             </CardContent>
           </Card>
           
           <Card className="bg-card border-l-4 border-l-emerald-500">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider font-mono">On-Time Rate</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider font-mono">{t("dashboard.onTimeRate")}</CardTitle>
               <CheckCircle2 className="h-4 w-4 text-emerald-500" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{summary.onTimeRate.toFixed(1)}%</div>
               <p className="text-xs text-muted-foreground mt-1">
-                Avg Risk Score: {summary.avgRiskScore.toFixed(1)}
+                {t("dashboard.avgRiskScore", { score: summary.avgRiskScore.toFixed(1) })}
               </p>
             </CardContent>
           </Card>
@@ -89,9 +91,9 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card className="bg-card flex flex-col">
           <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-lg">Live Disruptions Feed</CardTitle>
+            <CardTitle className="text-lg">{t("dashboard.liveDisruptionsFeed")}</CardTitle>
             <Link href="/disruptions" className="text-xs text-primary hover:underline font-mono uppercase tracking-wider">
-              View All
+              {t("dashboard.viewAll")}
             </Link>
           </CardHeader>
           <CardContent className="flex-1">
@@ -124,7 +126,7 @@ export default function Dashboard() {
             ) : (
               <div className="flex flex-col items-center justify-center h-40 text-muted-foreground">
                 <CheckCircle2 className="h-8 w-8 mb-2 opacity-50 text-emerald-500" />
-                <p className="text-sm">No active disruptions detected</p>
+                <p className="text-sm">{t("dashboard.noActiveDisruptions")}</p>
               </div>
             )}
           </CardContent>
@@ -132,9 +134,9 @@ export default function Dashboard() {
 
         <Card className="bg-card flex flex-col">
           <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-lg">Highest Risk Shipments</CardTitle>
+            <CardTitle className="text-lg">{t("dashboard.highestRiskShipments")}</CardTitle>
             <Link href="/shipments" className="text-xs text-primary hover:underline font-mono uppercase tracking-wider">
-              View All
+              {t("dashboard.viewAll")}
             </Link>
           </CardHeader>
           <CardContent className="flex-1">
@@ -175,7 +177,7 @@ export default function Dashboard() {
             ) : (
               <div className="flex flex-col items-center justify-center h-40 text-muted-foreground">
                 <Box className="h-8 w-8 mb-2 opacity-50" />
-                <p className="text-sm">No high risk shipments</p>
+                <p className="text-sm">{t("dashboard.noHighRisk")}</p>
               </div>
             )}
           </CardContent>

@@ -1,10 +1,13 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { SidebarProvider, SidebarTrigger, SidebarInset } from "@/components/ui/sidebar";
 import { AppSidebar } from "./sidebar";
+import { LanguageSelector } from "./language-selector";
 import { useHealthCheck } from "@workspace/api-client-react";
 
 export function MainLayout({ children }: { children: React.ReactNode }) {
   const { data: health } = useHealthCheck();
+  const { t } = useTranslation();
 
   return (
     <SidebarProvider defaultOpen={true}>
@@ -15,10 +18,11 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
             <SidebarTrigger className="text-foreground" />
             <div className="flex-1" />
             <div className="flex items-center gap-4">
+              <LanguageSelector />
               <div className="flex items-center gap-2 text-xs">
                 <span className={`h-2 w-2 rounded-full ${health ? 'bg-primary' : 'bg-destructive'}`} />
                 <span className="text-muted-foreground uppercase tracking-widest font-mono">
-                  {health ? 'System Online' : 'System Offline'}
+                  {health ? t("systemOnline") : t("systemOffline")}
                 </span>
               </div>
             </div>

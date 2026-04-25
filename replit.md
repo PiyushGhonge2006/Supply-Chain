@@ -30,7 +30,7 @@ A full-stack real-time supply chain monitoring and optimization platform. Provid
 - `/shipments/:id` — Shipment detail view
 - `/disruptions` — Disruption alerts (weather, port congestion, strikes, etc.)
 - `/routes` — Route optimizer with cost/time tradeoffs
-- `/route-finder` — Multi-path Dijkstra/Yen's K-shortest with satellite map, OSRM road-following polylines, incident-aware re-routing, before/after compare
+- `/route-finder` — Multi-path Dijkstra/Yen's K-shortest with OpenStreetMap base tiles (matches World Map), OSRM road-following polylines, route-aware incident detection (only disruptions intersecting the active route trigger reroute alerts; off-route incidents shown muted gray), before/after compare
 - `/map` — World map with road-following routes via OSRM
 - `/analytics` — Charts: delay forecast, disruption trends, cost breakdown
 - `/warehouses` — Warehouse and port congestion monitoring
@@ -63,6 +63,16 @@ A full-stack real-time supply chain monitoring and optimization platform. Provid
 - `GET/POST /api/routes` — List/create routes
 - `POST /api/routes/:id/optimize` — Get route optimization alternatives
 - `GET /api/warehouses` — List warehouses and ports
+
+## Internationalization (i18n)
+
+- Library: `i18next` + `react-i18next`
+- Config: `artifacts/supply-chain/src/lib/i18n.ts` (loads on app boot from `main.tsx`)
+- Translation files: `artifacts/supply-chain/src/lib/locales/{en,hi,mr,bn,ta,te}.ts`
+- Supported languages: English, Hindi (हिन्दी), Marathi (मराठी), Bengali (বাংলা), Tamil (தமிழ்), Telugu (తెలుగు)
+- User selection persisted in `localStorage` under key `supply-chain.lang`
+- Selector component: `src/components/layout/language-selector.tsx` (in header)
+- Currently translated surfaces: sidebar nav + brand, header status, Dashboard page, World Map page, Route Finder page
 
 ## Important Notes
 

@@ -2,10 +2,11 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { useTranslation } from "react-i18next";
 import { useListShipments, useListWarehouses, useListDisruptions } from "@workspace/api-client-react";
 import {
   Search, Navigation, X, AlertTriangle, Loader2,
-  ArrowRight, Clock, PencilRuler, Map as MapIcon, Package, Building2
+  ArrowRight, PencilRuler, Map as MapIcon, Package, Building2
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -135,6 +136,7 @@ function FlyToController({ center }: { center: [number, number] | null }) {
 
 /* ── Main component ──────────────────────────────────────────── */
 export default function MapPage() {
+  const { t } = useTranslation();
   const { data: shipments = [] } = useListShipments();
   const { data: warehouses = [] } = useListWarehouses();
   const { data: disruptions = [] } = useListDisruptions({ resolved: false });
@@ -182,7 +184,7 @@ export default function MapPage() {
   /* route planner */
   const handleShowRoute = async () => {
     if (!origin.trim() || !dest.trim()) {
-      setRouteError("Enter both origin and destination.");
+      setRouteError(t("map.enterBoth"));
       return;
     }
     setRouteLoading(true);
@@ -193,8 +195,8 @@ export default function MapPage() {
 
     const [og, dg] = await Promise.all([geocode(origin), geocode(dest)]);
 
-    if (!og) { setRouteError(`Cannot find: "${origin}"`); setRouteLoading(false); return; }
-    if (!dg) { setRouteError(`Cannot find: "${dest}"`); setRouteLoading(false); return; }
+    if (!og) { setRouteError(t("map.cannotFind", { q: origin })); setRouteLoading(false); return; }
+    if (!dg) { setRouteError(t("map.cannotFind", { q: dest }));   setRouteLoading(false); return; }
 
     setOriginGeo(og);
     setDestGeo(dg);
@@ -255,9 +257,9 @@ export default function MapPage() {
       <div className="flex items-center justify-between shrink-0">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <MapIcon className="h-6 w-6 text-primary" /> World Map
+            <MapIcon className="h-6 w-6 text-primary" /> {t("map.title")}
           </h1>
-          <p className="text-sm text-muted-foreground">Live shipment tracking &amp; route planner</p>
+          <p className="text-sm text-muted-foreground">{t("map.subtitle")}</p>
         </div>
         <div className="flex gap-2">
           {(["all", "shipments", "warehouses"] as const).map((f) => (
@@ -266,7 +268,7 @@ export default function MapPage() {
               className="text-xs uppercase tracking-wider font-mono"
               onClick={() => setFilter(f)}
             >
-              {f}
+              {t(`map.filters.${f}`)}
             </Button>
           ))}
         </div>
@@ -282,7 +284,7 @@ export default function MapPage() {
           <Card className="bg-card shrink-0">
             <CardHeader className="pb-2 pt-4 px-4">
               <CardTitle className="text-xs font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                <Search className="h-3.5 w-3.5" /> Location Search
+                <Search className="h-3.5 w-3.5" /> {t("map.locationSearch")}
               </CardTitle>
             </CardHeader>
             <CardContent className="px-4 pb-4">
@@ -291,7 +293,7 @@ export default function MapPage() {
                 <Input
                   value={searchText}
                   onChange={(e) => handleSearchChange(e.target.value)}
-                  placeholder="City, port, airport…"
+                  placeholder={t("map.locationPlaceholder")}
                   className="pl-8 bg-background text-sm h-9"
                 />
                 {searching && <Loader2 className="absolute right-2.5 top-2.5 h-4 w-4 animate-spin text-muted-foreground" />}
@@ -316,7 +318,7 @@ export default function MapPage() {
           <Card className="bg-card shrink-0">
             <CardHeader className="pb-2 pt-4 px-4">
               <CardTitle className="text-xs font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                <Navigation className="h-3.5 w-3.5" /> Route Planner
+                <Navigation className="h-3.5 w-3.5" /> {t("map.routePlanner")}
               </CardTitle>
             </CardHeader>
             <CardContent className="px-4 pb-4 space-y-2">
@@ -324,7 +326,7 @@ export default function MapPage() {
                 <span className="absolute left-2.5 top-2.5 h-3 w-3 rounded-full bg-emerald-500 border-2 border-emerald-300 pointer-events-none" />
                 <Input value={origin} onChange={(e) => setOrigin(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleShowRoute()}
-                  placeholder="Origin  (e.g. Shanghai)"
+                  placeholder={t("map.originPlaceholder")}
                   className="pl-8 bg-background text-sm h-9" />
               </div>
               <div className="flex justify-center">
@@ -334,7 +336,7 @@ export default function MapPage() {
                 <span className="absolute left-2.5 top-2.5 h-3 w-3 rounded-full bg-red-500 border-2 border-red-300 pointer-events-none" />
                 <Input value={dest} onChange={(e) => setDest(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleShowRoute()}
-                  placeholder="Destination  (e.g. Los Angeles)"
+                  placeholder={t("map.destPlaceholder")}
                   className="pl-8 bg-background text-sm h-9" />
               </div>
 
@@ -343,8 +345,8 @@ export default function MapPage() {
               <div className="flex gap-2 pt-1">
                 <Button onClick={handleShowRoute} disabled={routeLoading} className="flex-1 text-xs font-mono uppercase tracking-wider h-9">
                   {routeLoading
-                    ? <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />Locating…</>
-                    : <><Navigation className="h-3.5 w-3.5 mr-1.5" />Show Route</>}
+                    ? <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />{t("map.locating")}</>
+                    : <><Navigation className="h-3.5 w-3.5 mr-1.5" />{t("map.showRoute")}</>}
                 </Button>
                 {routePath && (
                   <Button variant="outline" size="icon" onClick={clearRoute} className="h-9 w-9 shrink-0">
@@ -358,26 +360,26 @@ export default function MapPage() {
                 <div className="rounded border border-primary/30 bg-primary/5 p-3 space-y-2 text-xs">
                   <div className="flex items-center gap-1.5">
                     <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
-                    <span className="text-muted-foreground">From</span>
+                    <span className="text-muted-foreground">{t("map.from")}</span>
                     <span className="font-semibold truncate">{originGeo.display_name.split(",")[0]}</span>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className="h-2 w-2 rounded-full bg-red-500 shrink-0" />
-                    <span className="text-muted-foreground">To</span>
+                    <span className="text-muted-foreground">{t("map.to")}</span>
                     <span className="font-semibold truncate">{destGeo.display_name.split(",")[0]}</span>
                   </div>
                   <div className="border-t border-border/50 pt-2">
                     <div className="flex items-center gap-1.5 mb-2">
                       <PencilRuler className="h-3 w-3 text-primary" />
-                      <span className="text-muted-foreground">Distance:</span>
+                      <span className="text-muted-foreground">{t("map.distance")}</span>
                       <span className="font-mono font-bold text-primary">{distKm.toLocaleString()} km</span>
                     </div>
-                    <div className="text-muted-foreground text-[10px] uppercase tracking-wider mb-1">Estimated Transit</div>
+                    <div className="text-muted-foreground text-[10px] uppercase tracking-wider mb-1">{t("map.estimatedTransit")}</div>
                     <div className="grid grid-cols-3 gap-1">
                       {[
-                        { label: "Air", value: airHours, color: "text-blue-400" },
-                        { label: "Sea", value: seaHours, color: "text-cyan-400" },
-                        { label: "Road", value: roadHours, color: "text-amber-400" },
+                        { label: t("map.air"),  value: airHours,  color: "text-blue-400" },
+                        { label: t("map.sea"),  value: seaHours,  color: "text-cyan-400" },
+                        { label: t("map.road"), value: roadHours, color: "text-amber-400" },
                       ].map(({ label, value, color }) => (
                         <div key={label} className="bg-background rounded p-1.5 text-center border border-border">
                           <div className={`font-mono font-bold text-[11px] ${color}`}>
@@ -396,23 +398,23 @@ export default function MapPage() {
           {/* legend + stats */}
           <Card className="bg-card shrink-0">
             <CardHeader className="pb-2 pt-4 px-4">
-              <CardTitle className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Legend</CardTitle>
+              <CardTitle className="text-xs font-mono uppercase tracking-wider text-muted-foreground">{t("map.legend")}</CardTitle>
             </CardHeader>
             <CardContent className="px-4 pb-4 space-y-1.5 text-xs">
               {Object.entries(STATUS_COLOR).map(([s, c]) => (
                 <div key={s} className="flex items-center gap-2">
                   <span className="h-3 w-3 rounded-full shrink-0" style={{ background: c }} />
-                  <span className="capitalize text-muted-foreground">{s.replace(/_/g, " ")}</span>
+                  <span className="capitalize text-muted-foreground">{t(`map.status.${s}`)}</span>
                 </div>
               ))}
               <div className="flex items-center gap-2">
                 <span className="h-3 w-3 rounded-sm shrink-0 bg-violet-500" />
-                <span className="text-muted-foreground">Warehouse / Port</span>
+                <span className="text-muted-foreground">{t("map.warehousePort")}</span>
               </div>
 
               {activeDisruptions.length > 0 && (
                 <div className="pt-2 border-t border-border space-y-1.5 mt-2">
-                  <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-mono">Active Alerts</div>
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-mono">{t("map.activeAlerts")}</div>
                   {activeDisruptions.slice(0, 4).map((d) => (
                     <div key={d.id} className="flex items-start gap-1.5">
                       <AlertTriangle className={`h-3 w-3 mt-0.5 shrink-0 ${
@@ -432,20 +434,20 @@ export default function MapPage() {
               <CardContent className="p-3">
                 <div className="flex items-center gap-1.5 mb-1">
                   <Package className="h-3.5 w-3.5 text-primary" />
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-mono">Shipments</span>
+                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-mono">{t("map.shipments")}</span>
                 </div>
                 <div className="text-xl font-bold font-mono">{shipmentsOnMap.length}</div>
-                <div className="text-[10px] text-muted-foreground">plotted on map</div>
+                <div className="text-[10px] text-muted-foreground">{t("map.plottedOnMap")}</div>
               </CardContent>
             </Card>
             <Card className="bg-card">
               <CardContent className="p-3">
                 <div className="flex items-center gap-1.5 mb-1">
                   <Building2 className="h-3.5 w-3.5 text-violet-400" />
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-mono">Facilities</span>
+                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-mono">{t("map.facilities")}</span>
                 </div>
                 <div className="text-xl font-bold font-mono">{warehouses.length}</div>
-                <div className="text-[10px] text-muted-foreground">ports &amp; warehouses</div>
+                <div className="text-[10px] text-muted-foreground">{t("map.portsAndWarehouses")}</div>
               </CardContent>
             </Card>
           </div>
