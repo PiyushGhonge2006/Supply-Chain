@@ -71,6 +71,8 @@ export default {
     lon: "రేఖాంశం",
     speed: "వేగం",
     accuracy: "ఖచ్చితత్వం",
+    useLiveAsOrigin: "ప్రత్యక్ష స్థానాన్ని మూలంగా ఉపయోగించండి",
+    liveLocationLabel: "నా ప్రత్యక్ష స్థానం",
     status: {
       in_transit: "రవాణాలో",
       delayed: "ఆలస్యం",

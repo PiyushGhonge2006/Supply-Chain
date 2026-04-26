@@ -214,6 +214,7 @@ export default function MapPage() {
   const { tracking, location, error: geoError, start: startTracking, stop: stopTracking } = useGeolocation();
   const [followMe, setFollowMe] = useState(true);
   const [vehicleLabel, setVehicleLabel] = useState("My Vehicle");
+  const [useLiveAsOrigin, setUseLiveAsOrigin] = useState(true);
 
   const toggleTracking = () => {
     if (tracking) stopTracking();
@@ -248,7 +249,13 @@ export default function MapPage() {
 
   /* route planner */
   const handleShowRoute = async () => {
-    if (!origin.trim() || !dest.trim()) {
+    const useLive = tracking && useLiveAsOrigin && location;
+
+    if (!useLive && !origin.trim()) {
+      setRouteError(t("map.enterBoth"));
+      return;
+    }
+    if (!dest.trim()) {
       setRouteError(t("map.enterBoth"));
       return;
     }
@@ -258,7 +265,17 @@ export default function MapPage() {
     setRouteBounds(null);
     setDistKm(null);
 
-    const [og, dg] = await Promise.all([geocode(origin), geocode(dest)]);
+    let og: GeoResult | null;
+    if (useLive) {
+      og = {
+        lat: String(location.latitude),
+        lon: String(location.longitude),
+        display_name: t("map.liveLocationLabel"),
+      };
+    } else {
+      og = await geocode(origin);
+    }
+    const dg = await geocode(dest);
 
     if (!og) { setRouteError(t("map.cannotFind", { q: origin })); setRouteLoading(false); return; }
     if (!dg) { setRouteError(t("map.cannotFind", { q: dest }));   setRouteLoading(false); return; }
@@ -387,13 +404,35 @@ export default function MapPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="px-4 pb-4 space-y-2">
-              <div className="relative">
-                <span className="absolute left-2.5 top-2.5 h-3 w-3 rounded-full bg-emerald-500 border-2 border-emerald-300 pointer-events-none" />
-                <Input value={origin} onChange={(e) => setOrigin(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleShowRoute()}
-                  placeholder={t("map.originPlaceholder")}
-                  className="pl-8 bg-background text-sm h-9" />
-              </div>
+              {tracking && (
+                <div className="flex items-center justify-between rounded border border-emerald-500/30 bg-emerald-500/5 px-2.5 py-2">
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <LocateFixed className="h-3.5 w-3.5 text-emerald-500" />
+                    <span className="text-emerald-500 font-semibold">{t("map.useLiveAsOrigin")}</span>
+                  </div>
+                  <Switch checked={useLiveAsOrigin} onCheckedChange={setUseLiveAsOrigin} />
+                </div>
+              )}
+
+              {tracking && useLiveAsOrigin && location ? (
+                <div className="relative rounded border border-emerald-500/40 bg-emerald-500/5 px-2.5 py-2 flex items-center gap-2">
+                  <span className="h-3 w-3 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                  <div className="text-xs flex-1 min-w-0">
+                    <div className="font-semibold text-emerald-500">{t("map.liveLocationLabel")}</div>
+                    <div className="font-mono text-[10px] text-muted-foreground truncate">
+                      {location.latitude.toFixed(4)}°, {location.longitude.toFixed(4)}°
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="relative">
+                  <span className="absolute left-2.5 top-2.5 h-3 w-3 rounded-full bg-emerald-500 border-2 border-emerald-300 pointer-events-none" />
+                  <Input value={origin} onChange={(e) => setOrigin(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleShowRoute()}
+                    placeholder={t("map.originPlaceholder")}
+                    className="pl-8 bg-background text-sm h-9" />
+                </div>
+              )}
               <div className="flex justify-center">
                 <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
               </div>

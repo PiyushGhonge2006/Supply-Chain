@@ -71,6 +71,8 @@ export default {
     lon: "Lon",
     speed: "Speed",
     accuracy: "Accuracy",
+    useLiveAsOrigin: "Use live location as origin",
+    liveLocationLabel: "My Live Location",
     status: {
       in_transit: "in transit",
       delayed: "delayed",

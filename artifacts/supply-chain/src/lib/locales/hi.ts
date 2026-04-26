@@ -71,6 +71,8 @@ export default {
     lon: "देशांतर",
     speed: "गति",
     accuracy: "सटीकता",
+    useLiveAsOrigin: "लाइव स्थान को मूल स्थान के रूप में उपयोग करें",
+    liveLocationLabel: "मेरा लाइव स्थान",
     status: {
       in_transit: "मार्ग में",
       delayed: "विलंबित",

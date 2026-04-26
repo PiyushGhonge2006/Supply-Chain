@@ -71,6 +71,8 @@ export default {
     lon: "தீர்க்கரேகை",
     speed: "வேகம்",
     accuracy: "துல்லியம்",
+    useLiveAsOrigin: "நேரடி இடத்தைத் தொடக்கமாகப் பயன்படுத்து",
+    liveLocationLabel: "என் நேரடி இடம்",
     status: {
       in_transit: "பயணத்தில்",
       delayed: "தாமதம்",

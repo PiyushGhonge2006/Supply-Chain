@@ -71,6 +71,8 @@ export default {
     lon: "रेखांश",
     speed: "वेग",
     accuracy: "अचूकता",
+    useLiveAsOrigin: "थेट स्थान उगम म्हणून वापरा",
+    liveLocationLabel: "माझे थेट स्थान",
     status: {
       in_transit: "मार्गावर",
       delayed: "विलंबित",

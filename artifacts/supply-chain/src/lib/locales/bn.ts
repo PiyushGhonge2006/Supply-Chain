@@ -71,6 +71,8 @@ export default {
     lon: "দ্রাঘিমাংশ",
     speed: "গতি",
     accuracy: "নির্ভুলতা",
+    useLiveAsOrigin: "লাইভ অবস্থানকে উৎস হিসাবে ব্যবহার করুন",
+    liveLocationLabel: "আমার লাইভ অবস্থান",
     status: {
       in_transit: "চলমান",
       delayed: "বিলম্বিত",
