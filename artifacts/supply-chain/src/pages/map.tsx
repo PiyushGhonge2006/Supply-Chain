@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle, useMap, ScaleControl, ZoomControl } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useTranslation } from "react-i18next";
@@ -7,7 +7,7 @@ import { useListShipments, useListWarehouses, useListDisruptions } from "@worksp
 import {
   Search, Navigation, X, AlertTriangle, Loader2,
   ArrowRight, PencilRuler, Map as MapIcon, Package, Building2,
-  LocateFixed, LocateOff, Crosshair, Truck, Layers
+  LocateFixed, LocateOff, Crosshair, Truck
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -642,45 +642,40 @@ export default function MapPage() {
             zoom={2}
             style={{ height: "100%", width: "100%" }}
             worldCopyJump={true}
+            zoomControl={false}
           >
+            <ZoomControl position="bottomright" />
+            <ScaleControl position="bottomleft" imperial={false} />
             {mapType === "roadmap" && (
               <TileLayer
-                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-                maxZoom={19}
+                url="https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}"
+                subdomains={["0", "1", "2", "3"]}
+                attribution='&copy; Google Maps'
+                maxZoom={20}
               />
             )}
             {mapType === "satellite" && (
               <TileLayer
-                url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                attribution='Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community'
-                maxZoom={19}
+                url="https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}"
+                subdomains={["0", "1", "2", "3"]}
+                attribution='&copy; Google Maps'
+                maxZoom={20}
               />
             )}
             {mapType === "hybrid" && (
-              <>
-                <TileLayer
-                  url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                  attribution='Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics'
-                  maxZoom={19}
-                />
-                <TileLayer
-                  url="https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
-                  attribution='Labels &copy; Esri'
-                  maxZoom={19}
-                />
-                <TileLayer
-                  url="https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}"
-                  attribution=''
-                  maxZoom={19}
-                />
-              </>
+              <TileLayer
+                url="https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}"
+                subdomains={["0", "1", "2", "3"]}
+                attribution='&copy; Google Maps'
+                maxZoom={20}
+              />
             )}
             {mapType === "terrain" && (
               <TileLayer
-                url="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png"
-                attribution='Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, <a href="http://viewfinderpanoramas.org">SRTM</a> | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)'
-                maxZoom={17}
+                url="https://mt{s}.google.com/vt/lyrs=p&x={x}&y={y}&z={z}"
+                subdomains={["0", "1", "2", "3"]}
+                attribution='&copy; Google Maps'
+                maxZoom={20}
               />
             )}
 
@@ -845,28 +840,51 @@ export default function MapPage() {
               ))}
           </MapContainer>
 
-          {/* map type switcher */}
-          <div className="absolute top-[90px] left-3 z-[400] bg-background/90 backdrop-blur-sm border border-border rounded-md shadow-lg overflow-hidden">
-            <div className="flex items-center gap-1 px-2 py-1 border-b border-border bg-muted/40">
-              <Layers className="h-3 w-3 text-primary" />
-              <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Map Type</span>
-            </div>
-            <div className="flex flex-col">
-              {(["roadmap", "satellite", "hybrid", "terrain"] as const).map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setMapType(m)}
-                  className={`text-left px-3 py-1.5 text-xs font-mono uppercase tracking-wider transition-colors border-l-2 ${
-                    mapType === m
-                      ? "bg-primary/15 text-primary border-l-primary font-bold"
-                      : "text-muted-foreground border-l-transparent hover:bg-muted hover:text-foreground"
-                  }`}
-                >
-                  {m}
-                </button>
-              ))}
-            </div>
+          {/* Google-style map type chips (bottom-left, above scale bar) */}
+          <div className="absolute bottom-10 left-3 z-[400] flex gap-1.5 bg-white/95 dark:bg-background/95 backdrop-blur-sm border border-border rounded-lg shadow-xl p-1.5">
+            {([
+              { key: "roadmap",   label: "Map",       preview: "https://mt0.google.com/vt/lyrs=m&x=0&y=0&z=1" },
+              { key: "satellite", label: "Satellite", preview: "https://mt0.google.com/vt/lyrs=s&x=0&y=0&z=1" },
+              { key: "hybrid",    label: "Hybrid",    preview: "https://mt0.google.com/vt/lyrs=y&x=0&y=0&z=1" },
+              { key: "terrain",   label: "Terrain",   preview: "https://mt0.google.com/vt/lyrs=p&x=0&y=0&z=1" },
+            ] as const).map((m) => (
+              <button
+                key={m.key}
+                onClick={() => setMapType(m.key)}
+                title={m.label}
+                className={`flex flex-col items-center gap-0.5 rounded-md p-1 transition-all ${
+                  mapType === m.key
+                    ? "ring-2 ring-primary"
+                    : "ring-1 ring-border hover:ring-primary/50 opacity-80 hover:opacity-100"
+                }`}
+              >
+                <img
+                  src={m.preview}
+                  alt={m.label}
+                  className="w-12 h-12 rounded object-cover"
+                  loading="lazy"
+                />
+                <span className={`text-[9px] font-semibold ${
+                  mapType === m.key ? "text-primary" : "text-foreground"
+                }`}>
+                  {m.label}
+                </span>
+              </button>
+            ))}
           </div>
+
+          {/* Google-style "My Location" floating action button (above zoom controls) */}
+          <button
+            onClick={toggleTracking}
+            title={tracking ? "Stop live location" : "My location"}
+            className={`absolute bottom-32 right-3 z-[400] h-10 w-10 rounded-full shadow-xl flex items-center justify-center transition-colors border ${
+              tracking
+                ? "bg-primary text-primary-foreground border-primary animate-pulse"
+                : "bg-white dark:bg-background text-foreground border-border hover:bg-muted"
+            }`}
+          >
+            <Crosshair className="h-5 w-5" />
+          </button>
 
           {/* overlay counters */}
           <div className="absolute top-3 right-3 z-[400] flex flex-col gap-1.5 pointer-events-none select-none">
