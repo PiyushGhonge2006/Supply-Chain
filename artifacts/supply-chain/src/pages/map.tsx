@@ -1,16 +1,19 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useTranslation } from "react-i18next";
 import { useListShipments, useListWarehouses, useListDisruptions } from "@workspace/api-client-react";
 import {
   Search, Navigation, X, AlertTriangle, Loader2,
-  ArrowRight, PencilRuler, Map as MapIcon, Package, Building2
+  ArrowRight, PencilRuler, Map as MapIcon, Package, Building2,
+  LocateFixed, LocateOff, Crosshair, Truck
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
+import { useGeolocation } from "@/hooks/use-geolocation";
 
 /* ── Leaflet icon fix ─────────────────────────────────────────── */
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -52,6 +55,51 @@ const warehouseIcon = L.divIcon({
   iconSize: [13, 13],
   iconAnchor: [6, 6],
 });
+
+/* ── Live vehicle marker (rotates with heading) ──────────────── */
+function vehicleIcon(heading: number | null) {
+  const rot = heading == null || Number.isNaN(heading) ? 0 : heading;
+  return L.divIcon({
+    className: "",
+    html: `
+      <div style="position:relative;width:32px;height:32px;display:flex;align-items:center;justify-content:center">
+        <div style="position:absolute;inset:0;border-radius:50%;background:#22c55e33;animation:pulse 1.6s ease-out infinite"></div>
+        <div style="position:relative;width:22px;height:22px;border-radius:50%;background:#22c55e;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center">
+          <div style="transform:rotate(${rot}deg);color:#fff;font-size:11px;line-height:1">▲</div>
+        </div>
+      </div>
+      <style>
+        @keyframes pulse {
+          0%   { transform: scale(0.6); opacity: 0.9; }
+          100% { transform: scale(2.2); opacity: 0;   }
+        }
+      </style>
+    `,
+    iconSize: [32, 32],
+    iconAnchor: [16, 16],
+  });
+}
+
+/* Pans the map to follow the live location when "follow" is on */
+function FollowMeController({
+  position, follow,
+}: { position: [number, number] | null; follow: boolean }) {
+  const map = useMap();
+  const firstFix = useRef(true);
+  useEffect(() => {
+    if (!position || !follow) return;
+    if (firstFix.current) {
+      map.flyTo(position, Math.max(map.getZoom(), 14), { duration: 1.2 });
+      firstFix.current = false;
+    } else {
+      map.panTo(position, { animate: true, duration: 0.6 });
+    }
+  }, [position, follow, map]);
+  useEffect(() => {
+    if (!follow) firstFix.current = true;
+  }, [follow]);
+  return null;
+}
 
 /* ── Great-circle path (works for any two points on Earth) ───── */
 function greatCircle(from: [number, number], to: [number, number], steps = 80): [number, number][] {
@@ -161,6 +209,23 @@ export default function MapPage() {
 
   /* filter */
   const [filter, setFilter] = useState<"all" | "shipments" | "warehouses">("all");
+
+  /* live location tracking */
+  const { tracking, location, error: geoError, start: startTracking, stop: stopTracking } = useGeolocation();
+  const [followMe, setFollowMe] = useState(true);
+  const [vehicleLabel, setVehicleLabel] = useState("My Vehicle");
+
+  const toggleTracking = () => {
+    if (tracking) stopTracking();
+    else { setFollowMe(true); startTracking(); }
+  };
+
+  const livePosition: [number, number] | null = location
+    ? [location.latitude, location.longitude]
+    : null;
+  const speedKmh = location?.speed != null && location.speed >= 0
+    ? location.speed * 3.6
+    : null;
 
   /* search suggestions */
   const handleSearchChange = useCallback((val: string) => {
@@ -395,6 +460,81 @@ export default function MapPage() {
             </CardContent>
           </Card>
 
+          {/* live tracking */}
+          <Card className="bg-card shrink-0">
+            <CardHeader className="pb-2 pt-4 px-4">
+              <CardTitle className="text-xs font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                <Truck className="h-3.5 w-3.5" /> {t("map.liveTracking")}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-4 pb-4 space-y-2">
+              <Input
+                value={vehicleLabel}
+                onChange={(e) => setVehicleLabel(e.target.value)}
+                placeholder={t("map.vehicleLabelPlaceholder")}
+                className="bg-background text-sm h-9"
+              />
+
+              <Button
+                onClick={toggleTracking}
+                variant={tracking ? "destructive" : "default"}
+                className="w-full text-xs font-mono uppercase tracking-wider h-9"
+              >
+                {tracking
+                  ? <><LocateOff className="h-3.5 w-3.5 mr-1.5" />{t("map.stopTracking")}</>
+                  : <><LocateFixed className="h-3.5 w-3.5 mr-1.5" />{t("map.startTracking")}</>}
+              </Button>
+
+              {tracking && (
+                <div className="flex items-center justify-between rounded border border-border bg-background px-2.5 py-2">
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <Crosshair className="h-3.5 w-3.5 text-emerald-500" />
+                    <span className="text-muted-foreground">{t("map.followVehicle")}</span>
+                  </div>
+                  <Switch checked={followMe} onCheckedChange={setFollowMe} />
+                </div>
+              )}
+
+              {geoError && (
+                <p className="text-xs text-destructive flex items-start gap-1.5">
+                  <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                  <span>{geoError}</span>
+                </p>
+              )}
+
+              {tracking && location && (
+                <div className="rounded border border-emerald-500/30 bg-emerald-500/5 p-2.5 space-y-1.5 text-[11px] font-mono">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span className="text-emerald-500 font-bold uppercase tracking-wider text-[10px]">
+                      {t("map.liveSignal")}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <div>
+                      <div className="text-[9px] text-muted-foreground uppercase tracking-wider">{t("map.lat")}</div>
+                      <div className="font-bold">{location.latitude.toFixed(5)}°</div>
+                    </div>
+                    <div>
+                      <div className="text-[9px] text-muted-foreground uppercase tracking-wider">{t("map.lon")}</div>
+                      <div className="font-bold">{location.longitude.toFixed(5)}°</div>
+                    </div>
+                    <div>
+                      <div className="text-[9px] text-muted-foreground uppercase tracking-wider">{t("map.speed")}</div>
+                      <div className="font-bold">
+                        {speedKmh != null ? `${speedKmh.toFixed(1)} km/h` : "—"}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[9px] text-muted-foreground uppercase tracking-wider">{t("map.accuracy")}</div>
+                      <div className="font-bold">±{Math.round(location.accuracy)} m</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           {/* legend + stats */}
           <Card className="bg-card shrink-0">
             <CardHeader className="pb-2 pt-4 px-4">
@@ -467,8 +607,9 @@ export default function MapPage() {
               maxZoom={18}
             />
 
-            <FlyToController center={!routePath ? flyCenter : null} />
-            <FitBoundsController bounds={routeBounds} />
+            <FlyToController center={!routePath && !tracking ? flyCenter : null} />
+            <FitBoundsController bounds={!tracking ? routeBounds : null} />
+            <FollowMeController position={livePosition} follow={tracking && followMe} />
 
             {/* ── great-circle route ── */}
             {routePath && (
@@ -540,6 +681,60 @@ export default function MapPage() {
                   </Popup>
                 </Marker>
               ))}
+
+            {/* ── live vehicle ── */}
+            {tracking && livePosition && (
+              <>
+                <Circle
+                  center={livePosition}
+                  radius={Math.max(20, location?.accuracy ?? 30)}
+                  pathOptions={{ color: "#22c55e", fillColor: "#22c55e", fillOpacity: 0.12, weight: 1, opacity: 0.5 }}
+                />
+                <Marker position={livePosition} icon={vehicleIcon(location?.heading ?? null)}>
+                  <Popup>
+                    <div style={{ minWidth: 180, fontFamily: "monospace" }}>
+                      <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 4, color: "#22c55e" }}>
+                        {vehicleLabel || "My Vehicle"}
+                      </div>
+                      <table style={{ fontSize: 11, borderCollapse: "collapse", width: "100%" }}>
+                        <tbody>
+                          <tr>
+                            <td style={{ color: "#888", paddingRight: 6, paddingBottom: 2 }}>Lat</td>
+                            <td style={{ paddingBottom: 2 }}>{location!.latitude.toFixed(5)}°</td>
+                          </tr>
+                          <tr>
+                            <td style={{ color: "#888", paddingRight: 6, paddingBottom: 2 }}>Lon</td>
+                            <td style={{ paddingBottom: 2 }}>{location!.longitude.toFixed(5)}°</td>
+                          </tr>
+                          <tr>
+                            <td style={{ color: "#888", paddingRight: 6, paddingBottom: 2 }}>Accuracy</td>
+                            <td style={{ paddingBottom: 2 }}>±{Math.round(location!.accuracy)} m</td>
+                          </tr>
+                          <tr>
+                            <td style={{ color: "#888", paddingRight: 6, paddingBottom: 2 }}>Speed</td>
+                            <td style={{ paddingBottom: 2 }}>
+                              {speedKmh != null ? `${speedKmh.toFixed(1)} km/h` : "—"}
+                            </td>
+                          </tr>
+                          <tr>
+                            <td style={{ color: "#888", paddingRight: 6, paddingBottom: 2 }}>Heading</td>
+                            <td style={{ paddingBottom: 2 }}>
+                              {location!.heading != null ? `${Math.round(location!.heading)}°` : "—"}
+                            </td>
+                          </tr>
+                          <tr>
+                            <td style={{ color: "#888", paddingRight: 6, paddingBottom: 2 }}>Updated</td>
+                            <td style={{ paddingBottom: 2 }}>
+                              {new Date(location!.timestamp).toLocaleTimeString()}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </Popup>
+                </Marker>
+              </>
+            )}
 
             {/* ── warehouses ── */}
             {(filter === "all" || filter === "warehouses") &&
