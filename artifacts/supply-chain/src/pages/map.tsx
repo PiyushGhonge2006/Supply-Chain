@@ -7,7 +7,7 @@ import { useListShipments, useListWarehouses, useListDisruptions } from "@worksp
 import {
   Search, Navigation, X, AlertTriangle, Loader2,
   ArrowRight, PencilRuler, Map as MapIcon, Package, Building2,
-  LocateFixed, LocateOff, Crosshair, Truck
+  LocateFixed, LocateOff, Crosshair, Truck, Layers
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -209,6 +209,9 @@ export default function MapPage() {
 
   /* filter */
   const [filter, setFilter] = useState<"all" | "shipments" | "warehouses">("all");
+
+  /* map type */
+  const [mapType, setMapType] = useState<"roadmap" | "satellite" | "hybrid" | "terrain">("roadmap");
 
   /* live location tracking */
   const { tracking, location, error: geoError, start: startTracking, stop: stopTracking } = useGeolocation();
@@ -640,11 +643,46 @@ export default function MapPage() {
             style={{ height: "100%", width: "100%" }}
             worldCopyJump={true}
           >
-            <TileLayer
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-              maxZoom={18}
-            />
+            {mapType === "roadmap" && (
+              <TileLayer
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                maxZoom={19}
+              />
+            )}
+            {mapType === "satellite" && (
+              <TileLayer
+                url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                attribution='Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community'
+                maxZoom={19}
+              />
+            )}
+            {mapType === "hybrid" && (
+              <>
+                <TileLayer
+                  url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                  attribution='Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics'
+                  maxZoom={19}
+                />
+                <TileLayer
+                  url="https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
+                  attribution='Labels &copy; Esri'
+                  maxZoom={19}
+                />
+                <TileLayer
+                  url="https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}"
+                  attribution=''
+                  maxZoom={19}
+                />
+              </>
+            )}
+            {mapType === "terrain" && (
+              <TileLayer
+                url="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png"
+                attribution='Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, <a href="http://viewfinderpanoramas.org">SRTM</a> | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)'
+                maxZoom={17}
+              />
+            )}
 
             <FlyToController center={!routePath && !tracking ? flyCenter : null} />
             <FitBoundsController bounds={!tracking ? routeBounds : null} />
@@ -806,6 +844,29 @@ export default function MapPage() {
                 </Marker>
               ))}
           </MapContainer>
+
+          {/* map type switcher */}
+          <div className="absolute top-[90px] left-3 z-[400] bg-background/90 backdrop-blur-sm border border-border rounded-md shadow-lg overflow-hidden">
+            <div className="flex items-center gap-1 px-2 py-1 border-b border-border bg-muted/40">
+              <Layers className="h-3 w-3 text-primary" />
+              <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Map Type</span>
+            </div>
+            <div className="flex flex-col">
+              {(["roadmap", "satellite", "hybrid", "terrain"] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setMapType(m)}
+                  className={`text-left px-3 py-1.5 text-xs font-mono uppercase tracking-wider transition-colors border-l-2 ${
+                    mapType === m
+                      ? "bg-primary/15 text-primary border-l-primary font-bold"
+                      : "text-muted-foreground border-l-transparent hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+          </div>
 
           {/* overlay counters */}
           <div className="absolute top-3 right-3 z-[400] flex flex-col gap-1.5 pointer-events-none select-none">
